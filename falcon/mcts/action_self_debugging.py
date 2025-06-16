@@ -1,12 +1,15 @@
 import json
 import random
+import re
+
 import openai
-from falcon.smt.stmt_split import ast_stmt_split
+
 from falcon.src.loop_transformation.loop_transformation import (
     run_loop_contraction,
     run_loop_fusion,
     run_loop_reorder,
     run_split_annotation,
+    run_stmt_split,
 )
 from falcon.src.post_processing.post_processing import (
     replace_operation_with_intrinsic,
@@ -21,7 +24,7 @@ from falcon.src.pre_processing.preprocessing import (
     run_loop_recovery,
 )
 from falcon.unit_test import unit_test
-import re
+
 
 def fix_computation_code(source_code, error_code, error_output):
     prompt = f"""The error code is originally translated from given code with the same functionality.
@@ -48,7 +51,7 @@ def fix_computation_code(source_code, error_code, error_output):
     if match:
         code_content = match.group(1).strip()
         return code_content
-    return None        
+    return None
 
 
 def loop_recovery(file_name, code, source_platform, target_platform):
@@ -67,8 +70,17 @@ def loop_recovery(file_name, code, source_platform, target_platform):
 
 
 def stmt_split(file_name, code, source_platform, target_platform):
-    # TODO:add llm stmt split and unit test
-    return ast_stmt_split(code, target_platform)
+    final_code = run_stmt_split(code)
+    success, output = unit_test(file_name, final_code)
+    if success:
+        return final_code
+
+    for i in range(5):
+        final_code = fix_computation_code(code, final_code, output)
+        success, output = unit_test(file_name, final_code)
+        if success:
+            return final_code
+    return final_code
 
 
 def detensorization(file_name, code, source_platform, target_platform):

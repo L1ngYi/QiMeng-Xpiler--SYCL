@@ -50,8 +50,7 @@ class Detensorizer(NodeTransformer):
 
 
 def ast_detensorization(code, target):
-    """
-    Transform C code using an SMT solver to optimize loop constructs.
+    """Transform C code using an SMT solver to optimize loop constructs.
 
     This function parses the provided C code into an Abstract Syntax Tree (AST) and applies
     a transformation to split loops based on the given loop index and factor. The transformation

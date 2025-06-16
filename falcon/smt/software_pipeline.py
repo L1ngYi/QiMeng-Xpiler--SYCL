@@ -145,10 +145,8 @@ class PragmaVisitor(NodeTransformer):
 
 
 class SoftwarePipelineInserter(NodeTransformer):
-    """
-    A pycparser AST transformer that inserts a `#pragma software_pipeline`
-    immediately before every `for` loop in a C function body.
-    """
+    """A pycparser AST transformer that inserts a `#pragma software_pipeline`
+    immediately before every `for` loop in a C function body."""
 
     def visit_Compound(self, node):
         # If there are no statements, return as is
@@ -178,10 +176,8 @@ class SoftwarePipelineInserter(NodeTransformer):
 
 
 def apply_software_pipeline(source_code: str) -> str:
-    """
-    Parse the given C source code, apply the SoftwarePipelineInserter pass,
-    and return the transformed code as a string.
-    """
+    """Parse the given C source code, apply the SoftwarePipelineInserter pass,
+    and return the transformed code as a string."""
     # Parse into AST
     parser = c_parser.CParser()
     ast = parser.parse(source_code)

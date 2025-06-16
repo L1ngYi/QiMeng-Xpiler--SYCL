@@ -2,9 +2,8 @@ from pycparser import c_ast
 
 from falcon.util import (
     NodeTransformer,
-    make_full_func,
-    add_parallel_variable_prefix,
     generate_code,
+    make_full_func,
     parse_code_ast,
 )
 
@@ -121,6 +120,7 @@ def ast_thread_binding(code, target="mlu"):
     binding_code = generate_code(ast)
 
     return make_full_func(binding_code, target)
+
 
 if __name__ == "__main__":
     # 示例代码

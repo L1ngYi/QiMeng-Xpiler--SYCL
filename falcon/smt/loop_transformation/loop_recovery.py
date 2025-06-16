@@ -36,8 +36,8 @@ mlu_paravar = ["coreId", "clusterId"]
 
 
 def update_dim(cuda_code):
-    """The re module in Python is used to write a regular expression
-    that matches the number inside the parentheses."""
+    """The re module in Python is used to write a regular expression that
+    matches the number inside the parentheses."""
     match = re.search(r"__launch_bounds__\((\d+)\)", cuda_code)
     if match:
         # 打印匹配的数值

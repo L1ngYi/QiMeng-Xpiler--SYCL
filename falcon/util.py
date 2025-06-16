@@ -110,14 +110,16 @@ def add_parallel_variable_prefix(code):
     )
 
     # 2) Restore the function calls
-    code = re.sub(r"\bwmma_fill_fragment\b",     "wmma::fill_fragment",     code)
-    code = re.sub(r"\bwmma_load_matrix_sync\b",  "wmma::load_matrix_sync",  code)
-    code = re.sub(r"\bwmma_mma_sync\b",          "wmma::mma_sync",          code)
-    code = re.sub(r"\bwmma_store_matrix_sync\b", "wmma::store_matrix_sync", code)
+    code = re.sub(r"\bwmma_fill_fragment\b", "wmma::fill_fragment", code)
+    code = re.sub(r"\bwmma_load_matrix_sync\b", "wmma::load_matrix_sync", code)
+    code = re.sub(r"\bwmma_mma_sync\b", "wmma::mma_sync", code)
+    code = re.sub(
+        r"\bwmma_store_matrix_sync\b", "wmma::store_matrix_sync", code
+    )
     code = re.sub(
         r"(wmma::store_matrix_sync\s*\([^,]+,\s*[^,]+,\s*[^,]+,\s*)0(\s*\))",
         r"\1wmma::mem_row_major\2",
-        code
+        code,
     )
     return "__global__ " + code if "__global__ " not in code else code
 

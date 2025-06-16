@@ -25,7 +25,7 @@ class MergeLoopsAndIfsVisitor(NodeTransformer):
         return self.generic_visit(node)
 
     def visit_Compound(self, node):
-        """查找并合并连续的 for 循环和 if 语句"""
+        """查找并合并连续的 for 循环和 if 语句."""
         new_block_items = []
         i = 0
         while i < len(node.block_items):
@@ -111,7 +111,7 @@ class MergeLoopsAndIfsVisitor(NodeTransformer):
         return self.generic_visit(node)
 
     def is_similar_loop(self, loop1, loop2):
-        """检查两个 for 循环是否具有相同的循环条件、初始条件和步进操作"""
+        """检查两个 for 循环是否具有相同的循环条件、初始条件和步进操作."""
         return (
             isinstance(loop1, c_ast.For)
             and isinstance(loop2, c_ast.For)
@@ -124,13 +124,13 @@ class MergeLoopsAndIfsVisitor(NodeTransformer):
         )
 
     def get_loop_variable(self, for_loop):
-        """获取 for 循环中的循环变量"""
+        """获取 for 循环中的循环变量."""
         if isinstance(for_loop, c_ast.For):
             return for_loop.init.decls[0].name
         return None
 
     def rename_loop_variables(self, block_items):
-        """重命名循环体中的循环变量"""
+        """重命名循环体中的循环变量."""
         # 使用第一个循环变量的名称进行重命名
         for item in block_items:
             self.generic_visit(item)
@@ -142,7 +142,7 @@ class MergeLoopsAndIfsVisitor(NodeTransformer):
         return node
 
     def nodes_equal(self, node1, node2):
-        """递归地比较两个 AST 节点是否相同"""
+        """递归地比较两个 AST 节点是否相同."""
         generator = c_generator.CGenerator()
         output_code = generator.visit(node1)
         generator = c_generator.CGenerator()

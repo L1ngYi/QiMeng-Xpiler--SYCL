@@ -16,6 +16,7 @@ from falcon.src.loop_transformation.pass_prompt import (
     LOOP_REORDER_PROMPT,
     LOOP_SPLIT_DEMO,
     LOOP_SPLIT_PROMPT,
+    STMT_SPLIT_PROMPT,
     TENSOR_CONTRACTION,
     TENSOR_CONTRACTION_DEMO,
 )
@@ -158,6 +159,34 @@ def run_loop_contraction(code, target=None):
         code_content = match.group(1).strip()
         code_content = constant_inline(code_content)
         code_content = ast_stmt_simplification(code_content)
+        code_content = make_full_func(code_content, target)
+        return code_content
+    return None
+
+
+def run_stmt_split(code):
+    code = simplify_code(code)
+    PROMPT = """
+    {SYSTEM_PROMPT}
+    {STMT_SPLIT_PROMPT}
+
+    Please return the output kernel function without any additional information.
+    Input code: {code}
+    """
+    PROMPT = PROMPT.replace("{SYSTEM_PROMPT}", SYSTEM_PROMPT)
+
+    PROMPT = PROMPT.replace("{STMT_SPLIT_PROMPT}", STMT_SPLIT_PROMPT)
+    PROMPT = PROMPT.replace("{code}", code)
+    transformation_completion = openai.ChatCompletion.create(
+        model=model_name,
+        messages=[{"role": "user", "content": PROMPT}],
+    )
+
+    content = transformation_completion.choices[0].message["content"]
+    match = re.search(r"```[a-zA-Z]*\n(.*?)```", content, re.S)
+    if match:
+        code_content = match.group(1).strip()
+        code_content = constant_inline(code_content)
         code_content = make_full_func(code_content, target)
         return code_content
     return None

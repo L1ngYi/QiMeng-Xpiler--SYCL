@@ -12,7 +12,7 @@ class SplitForLoopVisitor(c_ast.NodeVisitor):
         self.org_extent = None
 
     def visit_Compound(self, node):
-        """查找 #pragma loop_split 并获取拆分因子，应用到后续的 for 循环"""
+        """查找 #pragma loop_split 并获取拆分因子，应用到后续的 for 循环."""
         blocks = node.block_items
         if not blocks:
             return
@@ -62,7 +62,7 @@ class SplitForLoopVisitor(c_ast.NodeVisitor):
         self.generic_visit(node)
 
     def split_for_loop(self, node):
-        """对 for 循环进行拆分"""
+        """对 for 循环进行拆分."""
         # 提取原始循环的最大值（循环范围）
         self.org_extent = int(node.cond.right.value)
         outer_extent = self.factor

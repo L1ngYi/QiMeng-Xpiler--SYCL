@@ -1,7 +1,12 @@
-from pycparser import c_ast, c_generator
+from pycparser import c_ast
 
 from falcon.smt.const_inline import constant_inline
-from falcon.util import NodeTransformer, make_full_func, parse_code_ast,generate_code
+from falcon.util import (
+    NodeTransformer,
+    generate_code,
+    make_full_func,
+    parse_code_ast,
+)
 
 
 class LoopSplitter(NodeTransformer):

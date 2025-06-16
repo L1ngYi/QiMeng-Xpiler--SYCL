@@ -274,3 +274,127 @@ extern "C" void relu_and_store(float* input, float* output, int N) {
 }
 ```
 """
+
+STMT_SPLIT_PROMPT = """
+
+## STMT\\_SPLIT Prompt (Loop Body Statement Splitter)
+
+You are a code transformation engine.
+Your task is to **split a single `for` loop that contains multiple statements in its body** into **multiple independent `for` loops**, each with a single statement as the loop body.
+However, this transformation should only be applied if **none** of the statements in the original loop body is a **declaration** (e.g., `int x = 0;`).
+If **any** declaration is found inside the loop body, keep the original `for` loop unchanged.
+
+All non-loop code should remain unchanged.
+
+---
+
+### Examples
+
+#### Example 1: Split multi-statement loop
+
+**Input:**
+
+```c
+void foo() {
+    for (int i = 0; i < N; i++) {
+        A[i] = B[i];
+        C[i] = D[i];
+    }
+}
+```
+
+**Output:**
+
+```c
+void foo() {
+    for (int i = 0; i < N; i++) {
+        A[i] = B[i];
+    }
+    for (int i = 0; i < N; i++) {
+        C[i] = D[i];
+    }
+}
+```
+
+---
+
+#### Example 2: Declaration present — no split
+
+**Input:**
+
+```c
+void bar() {
+    for (int i = 0; i < N; i++) {
+        int tmp = A[i];
+        B[i] = tmp + 1;
+    }
+}
+```
+
+**Output:**
+
+```c
+void bar() {
+    for (int i = 0; i < N; i++) {
+        int tmp = A[i];
+        B[i] = tmp + 1;
+    }
+}
+```
+
+---
+
+#### Example 3: Loop with a single statement — no change
+
+**Input:**
+
+```c
+void baz() {
+    for (int i = 0; i < N; i++) {
+        A[i]++;
+    }
+}
+```
+
+**Output:**
+
+```c
+void baz() {
+    for (int i = 0; i < N; i++) {
+        A[i]++;
+    }
+}
+```
+
+---
+
+#### Example 4: Mix of loops and non-loop code
+
+**Input:**
+
+```c
+void qux() {
+    int sum = 0;
+    for (int i = 0; i < N; i++) {
+        sum += A[i];
+        B[i] = sum;
+    }
+    printf("%d\n", sum);
+}
+```
+
+**Output:**
+
+```c
+void qux() {
+    int sum = 0;
+    for (int i = 0; i < N; i++) {
+        sum += A[i];
+    }
+    for (int i = 0; i < N; i++) {
+        B[i] = sum;
+    }
+    printf("%d\n", sum);
+}
+```
+"""
