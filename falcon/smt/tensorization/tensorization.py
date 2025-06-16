@@ -5,8 +5,8 @@ from pycparser import c_ast
 
 from falcon.util import (
     NodeTransformer,
-    make_full_func,
     generate_code,
+    make_full_func,
     parse_code_ast,
 )
 
@@ -17,7 +17,7 @@ class PragmaToSIMDTransformer(NodeTransformer):
         self.vectorize_var = None
 
     def visit_Compound(self, node):
-        """遍历代码块，查找并修改带有 #pragma 的 for 循环"""
+        """遍历代码块，查找并修改带有 #pragma 的 for 循环."""
         new_block_items = []
         i = 0
         while i < len(node.block_items):
@@ -128,7 +128,7 @@ class PragmaToSIMDTransformer(NodeTransformer):
         # 重置上界列表并访问 for_loop 以填充 self.loop_exts
         self.loop_exts = []
         self.visit(for_loop)  # 递归访问 for_loop 的子节点以触发 visit_For
-        """根据 pragma 生成对应的指令，替换 for 循环"""
+        """根据 pragma 生成对应的指令，替换 for 循环."""
         if "memory" in pragma_text:
             src_dir = (
                 input_params[0].split("_")[1].upper()
@@ -189,7 +189,7 @@ class PragmaToSIMDTransformer(NodeTransformer):
         return transformed_code
 
     def visit_For(self, node):
-        """提取 for 循环的上界值并存储在 self.loop_exts 列表中"""
+        """提取 for 循环的上界值并存储在 self.loop_exts 列表中."""
         if isinstance(node.cond, c_ast.BinaryOp) and node.cond.op == "<":
             if isinstance(node.cond.right, c_ast.Constant):
                 upper_bound = node.cond.right.value

@@ -2,8 +2,7 @@ from falcon.mcts.actions import actions as ActionSpace
 
 
 def generate_prior_from_src(code, src_target, dst_target):
-    """
-    根据源代码中出现的特定关键词，为各个转换 pass 分配优先级。
+    """根据源代码中出现的特定关键词，为各个转换 pass 分配优先级。
 
     参数：
       code: 字符串，源代码内容。

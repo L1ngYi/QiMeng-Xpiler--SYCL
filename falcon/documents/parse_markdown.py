@@ -5,7 +5,7 @@ from bs4 import BeautifulSoup
 
 
 def parse_markdown(file_path):
-    """解析 Markdown 文件并提取标题及其对应的段落内容"""
+    """解析 Markdown 文件并提取标题及其对应的段落内容."""
     # 读取 Markdown 文件
     with open(file_path, "r", encoding="utf-8") as f:
         md_content = f.read()

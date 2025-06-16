@@ -52,8 +52,9 @@ BS = 1
 
 
 def objective(file_name, target):
-    """We design an objective function. If compile and runtime error happens,
-    then the score is zero.
+    """We design an objective function.
+
+    If compile and runtime error happens, then the score is zero.
     """
     try:
         time_ms = 1000000
@@ -100,10 +101,13 @@ class FalconGo:
         os.makedirs(self.output_dir, exist_ok=True)
 
     def perform_action(self, actions):
-        """Generates a design space for a given `action`. It calls `generate_design_space()`
+        """Generates a design space for a given `action`.
+
+        It calls `generate_design_space()`
         with specific parameters to apply the given scheduling rule (`action`) to the module.
         The function returns a new `ProgramState` object, which represents the new program
-        state after applying the action."""
+        state after applying the action.
+        """
         code = open_file(self.file_name)
         code = (
             code.split("extern")[0]
@@ -151,7 +155,9 @@ class FalconGo:
                 base_name = os.path.basename(self.file_name)
                 name_no_ext, _ = os.path.splitext(base_name)
                 target, file_type = get_target(code, self.target_platform)
-                new_file = os.path.join(self.output_dir, name_no_ext + file_type)
+                new_file = os.path.join(
+                    self.output_dir, name_no_ext + file_type
+                )
                 with open(new_file, "w", encoding="utf-8") as f:
                     f.write(code)
         except Exception:

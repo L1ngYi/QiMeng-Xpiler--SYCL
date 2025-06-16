@@ -41,8 +41,9 @@ logging.basicConfig(
 
 
 def objective(file_name, target):
-    """We design an objective function. If compile and runtime error happens,
-    then the score is zero.
+    """We design an objective function.
+
+    If compile and runtime error happens, then the score is zero.
     """
     try:
         time_ms = 1000000
@@ -136,10 +137,13 @@ class FalconGo:
         os.makedirs(self.output_dir, exist_ok=True)
 
     def perform_action(self, actions):
-        """Generates a design space for a given `action`. It calls `generate_design_space()`
+        """Generates a design space for a given `action`.
+
+        It calls `generate_design_space()`
         with specific parameters to apply the given scheduling rule (`action`) to the module.
         The function returns a new `ProgramState` object, which represents the new program
-        state after applying the action."""
+        state after applying the action.
+        """
         code = open_file(self.file_name)
         code = (
             code.split("extern")[0]

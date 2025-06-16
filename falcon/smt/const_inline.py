@@ -3,14 +3,13 @@ import copy
 from pycparser import c_ast
 
 from falcon.util import NodeTransformer, generate_code, parse_code_ast
-import copy
 
 
 class ConstInlineTransformer(NodeTransformer):
     def __init__(self):
         super().__init__()
-        self.constants = {}           # 常量记录
-        self.reassigned = set()       # 记录被重新赋值过的变量
+        self.constants = {}  # 常量记录
+        self.reassigned = set()  # 记录被重新赋值过的变量
 
     def visit_Decl(self, node):
         if node.init and isinstance(node.init, c_ast.Constant):
@@ -24,12 +23,14 @@ class ConstInlineTransformer(NodeTransformer):
 
     def visit_Assignment(self, node):
         # 判断赋值是否是简单常量，是否是首次赋值
-        if (
-            isinstance(node.lvalue, c_ast.ID) and
-            isinstance(node.rvalue, c_ast.Constant)
+        if isinstance(node.lvalue, c_ast.ID) and isinstance(
+            node.rvalue, c_ast.Constant
         ):
             varname = node.lvalue.name
-            if varname not in self.constants and varname not in self.reassigned:
+            if (
+                varname not in self.constants
+                and varname not in self.reassigned
+            ):
                 self.constants[varname] = copy.deepcopy(node.rvalue)
                 return node
 
@@ -53,7 +54,9 @@ class ConstInlineTransformer(NodeTransformer):
 
         if node.next is None:
             loop_var = None
-            if isinstance(node.cond, c_ast.BinaryOp) and isinstance(node.cond.left, c_ast.ID):
+            if isinstance(node.cond, c_ast.BinaryOp) and isinstance(
+                node.cond.left, c_ast.ID
+            ):
                 loop_var = node.cond.left.name
             if loop_var:
                 node.next = c_ast.Assignment(

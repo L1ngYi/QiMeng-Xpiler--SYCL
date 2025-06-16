@@ -11,10 +11,11 @@ fi
 process_file() {
 	local file="$1"
 	echo "Processing file: $file"
-	autopep8 --in-place --aggressive --max-line-length 79 "$file"
 	# Remove unused imports
 	autoflake --remove-all-unused-imports --remove-unused-variables --in-place "$file"
-
+	docformatter --in-place --wrap-summaries 79 --wrap-descriptions 79 "$file"
+	autopep8 --in-place --aggressive --max-line-length 79 "$file"
+	pydocstringformatter --style=pep257 --style=numpydoc "$file"
 	# Sort import modules
 	isort "$file"
 

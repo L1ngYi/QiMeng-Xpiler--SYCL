@@ -1,13 +1,13 @@
 import json
 import random
 
-from falcon.smt.stmt_split import ast_stmt_split
 from falcon.src.loop_transformation.loop_transformation import (
     run_apply_split,
     run_loop_contraction,
     run_loop_fusion,
     run_loop_reorder,
     run_split_annotation,
+    run_stmt_split,
 )
 from falcon.src.post_processing.post_processing import (
     replace_operation_with_intrinsic,
@@ -29,8 +29,7 @@ def loop_recovery(file_name, code, source_platform, target_platform):
 
 
 def stmt_split(file_name, code, source_platform, target_platform):
-    # TODO:add llm stmt split and unit test
-    return ast_stmt_split(code, target_platform)
+    return run_stmt_split(code)
 
 
 def detensorization(file_name, code, source_platform, target_platform):

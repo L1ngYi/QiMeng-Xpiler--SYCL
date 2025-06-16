@@ -34,12 +34,12 @@ class CacheTransformationVisitor(NodeTransformer):
         self.cache_size = cache_size
 
     def visit_FuncDef(self, node):
-        """在函数定义节点内创建缓存缓冲区，并添加缓存加载和写回逻辑"""
+        """在函数定义节点内创建缓存缓冲区，并添加缓存加载和写回逻辑."""
         self.create_cache_buffers(node)  # 在函数开头创建缓存缓冲区
         return node
 
     def create_cache_buffers(self, node):
-        """根据 space_map 创建 NRAM 缓冲区"""
+        """根据 space_map 创建 NRAM 缓冲区."""
         size_param = c_ast.Constant(type="int", value=self.cache_size[0])
         declarations = []
 
@@ -94,7 +94,7 @@ class CacheTransformationVisitor(NodeTransformer):
         self.generic_visit(node)
 
     def visit_Compound(self, node):
-        """在找到 for 循环后插入缓存读写操作"""
+        """在找到 for 循环后插入缓存读写操作."""
         new_block_items = []
         start_cache = False
         for item in node.block_items:
@@ -120,7 +120,7 @@ class CacheTransformationVisitor(NodeTransformer):
         return self.generic_visit(node)
 
     def modify_for_loop_body(self, for_node, reads, writes):
-        """将 for 循环体内的变量替换为 NRAM 缓冲区变量"""
+        """将 for 循环体内的变量替换为 NRAM 缓冲区变量."""
         index = c_ast.ID(name=for_node.init.decls[0].name)
         inputs = []
         for var_name, location in self.space_map[0]["input"].items():
@@ -217,7 +217,8 @@ class CacheTransformationVisitor(NodeTransformer):
         )
 
     def create_write_back_loop(self, src, for_node, index_expr):
-        """Creates a write-back loop with specified complex index expression."""
+        """Creates a write-back loop with specified complex index
+        expression."""
         index = c_ast.ID(name=for_node.init.decls[0].name)
         return c_ast.For(
             init=for_node.init,
