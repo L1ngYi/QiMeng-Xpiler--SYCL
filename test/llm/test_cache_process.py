@@ -1,6 +1,6 @@
-import os
 import re
 
+from falcon.client import invoke_llm
 from falcon.src.post_processing.post_processing_prompt import (
     CACHE_READ_DEMO,
     CACHE_READ_PROMPT,
@@ -8,9 +8,7 @@ from falcon.src.post_processing.post_processing_prompt import (
     CACHE_WRITE_PROMPT,
 )
 from falcon.src.prompt.prompt import SYSTEM_PROMPT
-
-model_name = """gpt-4-turbo"""
-api_key = os.getenv("OPENAI_API_KEY")
+from falcon.util import extract_code
 
 
 def get_intrinsic_content(code):
@@ -89,14 +87,11 @@ def run_cache_process(code, space_maps):
         for key, value in space_map["input"].items():
             cache_read_prompt = generate_cache_read_prompt(key, value, code)
             content = invoke_llm(cache_read_prompt)
-            match = re.search(r"```[a-zA-Z]*\n(.*?)```", content, re.S)
-            code = match.group(1) if match else code
-
+            code = extract_code(content)
         for key, value in space_map["output"].items():
             cache_write_prompt = generate_cache_write_prompt(key, value, code)
             content = invoke_llm(cache_write_prompt)
-            match = re.search(r"```[a-zA-Z]*\n(.*?)```", content, re.S)
-            code = match.group(1) if match else code
+            code = extract_code(content)
     return code
 
 
