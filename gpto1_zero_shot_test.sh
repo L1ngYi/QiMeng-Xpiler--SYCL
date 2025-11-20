@@ -63,7 +63,7 @@ for dir_pair in "${DIRECTIONS[@]}"; do
 		filename=$(basename "$src_file")
 		dst_file="$out_dir/$filename"
 
-		# 打印进度，格式：Translating 文件名 [当前/总数]
+		# 打印进度，格式:Translating 文件名 [当前/总数]
 		printf "   Translating %-20s [%3d/%3d]\r" "$filename" "$i" "$total"
 
 		python3 "$TRANSLATOR_PY" "$src_file" "$src_plat" "$dst_plat"

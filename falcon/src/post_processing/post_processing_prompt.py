@@ -24,6 +24,7 @@ Additionally, existing cache reads should not be removed.
 - If new buffers need to be cached (e.g., `B`), cache them in separate buffers.
 - The transformation should mimic the behavior of `cache_read` from TVM and not alter the computation.
 - Size of "Nram", "Wram" must be static.
+- Do not add attribute((aligned(64))) or any alignment attribute to the buffer declaration. The buffer should be declared simply as {NAMESPACE} float A_{CACHE_NAME}[size]; without any additional attributes.
 """
 
 CACHE_READ_DEMO = """
@@ -79,7 +80,7 @@ for (int j = 0; j < 64; j++) {
 """
 
 CACHE_WRITE_PROMPT = """
-Cache Write：
+Cache Write:
 You are tasked with performing an optimization on C code that mimics the effect of `cache_write` from TVM in C for loops.
 The goal is to buffer intermediate results in {CACHE_NAME} memory (e.g., a temporary buffer)
 during computation and write them back to the main memory once the computation is complete.
@@ -106,6 +107,7 @@ Additionally, existing cache reads should not be removed.
 - If new buffers need to be cached (e.g., `B`), cache them in separate buffers.
 - The transformation should mimic the behavior of `cache_read` from TVM and not alter the computation.
 - Size of "Nram", "Wram" must be static.
+- Do not add attribute((aligned(64))) or any alignment attribute to the buffer declaration. The buffer should be declared simply as {NAMESPACE} float A_{CACHE_NAME}[size]; without any additional attributes.
 """
 
 CACHE_WRITE_DEMO = """
@@ -438,11 +440,11 @@ The input is a C++ code snippet containing for loops with element-wise or matrix
 ### Output:
 The transformed C++ code with the `#pragma operation( )` directives inserted before the detected operations and arguments inside loops, which marks them for SIMD vectorization.
 
-Here’s the same example rewritten as a **one‑to‑one mapping** of each input loop to its corresponding output (pragma + loop):
+Here’s the same example rewritten as a **one-to-one mapping** of each input loop to its corresponding output (pragma + loop):
 
 ---
 
-1. **Element‑wise add**
+1. **Element-wise add**
 
    **Input:**
    ```cpp
@@ -461,7 +463,7 @@ Here’s the same example rewritten as a **one‑to‑one mapping** of each inpu
 
 ---
 
-2. **Element‑wise multiply**
+2. **Element-wise multiply**
 
    **Input:**
    ```cpp
@@ -568,7 +570,7 @@ Here’s the same example rewritten as a **one‑to‑one mapping** of each inpu
 
 ---
 
-7. **Zero‑initialize buffer**
+7. **Zero-initialize buffer**
 
    **Input:**
    ```cpp

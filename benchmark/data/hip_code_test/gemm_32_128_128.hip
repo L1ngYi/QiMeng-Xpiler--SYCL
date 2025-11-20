@@ -9,8 +9,8 @@ __global__ void gemm(half *A, half *B, float *C) {
     const int LDC = N;   // C的leading dimension
 
     // 计算当前线程块处理的C矩阵块位置
-    const int c_row_base = blockIdx.y * 16;  // 行分块：32/16=2块
-    const int c_col_base = blockIdx.x * 16;  // 列分块：128/16=8块
+    const int c_row_base = blockIdx.y * 16;  // 行分块:32/16=2块
+    const int c_col_base = blockIdx.x * 16;  // 列分块:128/16=8块
 
     // 初始化累加器（4个float）
     floatx4 d = {0.0f};
@@ -22,12 +22,12 @@ __global__ void gemm(half *A, half *B, float *C) {
         // 向量化加载A/B子矩阵（带边界检查）
         #pragma unroll
         for(int i = 0; i < 4; ++i) {
-            // A矩阵索引：行由C块行决定，列按K分块
+            // A矩阵索引:行由C块行决定，列按K分块
             const int a_row = c_row_base + threadIdx.x;
             const int a_col = k_step + threadIdx.y * 4 + i;
             a[i] = (a_row < M && a_col < K) ? A[a_row * LDA + a_col] : 0.0h;
 
-            // B矩阵索引：行按K分块，列由C块列决定
+            // B矩阵索引:行按K分块，列由C块列决定
             const int b_row = k_step + threadIdx.y * 4 + i;
             const int b_col = c_col_base + threadIdx.x;
             b[i] = (b_row < K && b_col < N) ? B[b_row * LDB + b_col] : 0.0h;

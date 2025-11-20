@@ -13,7 +13,7 @@ original_iteration_count = 256 * 1024
 # 外层循环 256 次，j 从 0 到 4，k 从 0 到 n
 split_iteration_count = 256 * 4 * n
 
-# 添加约束：原始总迭代次数等于拆分后的总迭代次数
+# 添加约束:原始总迭代次数等于拆分后的总迭代次数
 solver.add(original_iteration_count == split_iteration_count)
 
 # 检查是否有解并输出

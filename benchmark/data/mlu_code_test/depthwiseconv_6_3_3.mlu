@@ -9,7 +9,7 @@ extern "C" __mlu_global__ void depthwiseconv(float *input, float *kernel,
   const int IW = 6; // 输入宽度
 
   const int total = C * H * W;
-  const int num_threads = 16; // 假设：每个 core 执行一个通道的多个像素
+  const int num_threads = 16; // 假设:每个 core 执行一个通道的多个像素
   int tid = clusterId * 4 + coreId;
 
   for (int idx = tid; idx < total; idx += num_threads) {

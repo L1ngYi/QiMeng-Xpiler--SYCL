@@ -17,12 +17,12 @@ initial_conditions = [
 ]
 s.add(initial_conditions)
 
-# 添加变换前的行为模型：for i in range(N): for j in range(M): A[i][j] += 1
+# 添加变换前的行为模型:for i in range(N): for j in range(M): A[i][j] += 1
 for i in range(N):
     for j in range(M):
         s.add(A_before[i][j] == A_before[i][j] + 1)
 
-# 添加变换后的行为模型：for j in range(M): for i in range(N): A[i][j] += 1
+# 添加变换后的行为模型:for j in range(M): for i in range(N): A[i][j] += 1
 for j in range(M):
     for i in range(N):
         s.add(A_after[i][j] == A_after[i][j] + 1)
@@ -35,6 +35,6 @@ s.add(Not(And(*equivalence_conditions)))
 
 # 检查等效性
 if s.check() == sat:
-    print("代码不等效，找到反例：", s.model())
+    print("代码不等效，找到反例:", s.model())
 else:
     print("代码等效")

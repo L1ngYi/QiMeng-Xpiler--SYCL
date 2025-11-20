@@ -4,8 +4,8 @@ __global__ void bmm(half *A, half *B, float *C) {
     floatx4 d = {0.0f};   // 初始化累加器为0
 
     // 当前线程块处理的C块起始位置
-    int c_row_base = blockIdx.x * 16;   // M维度：128/16=8块
-    int c_col_base = blockIdx.y * 16;   // N维度：512/16=32块
+    int c_row_base = blockIdx.x * 16;   // M维度:128/16=8块
+    int c_col_base = blockIdx.y * 16;   // N维度:512/16=32块
 
     // 遍历K维度（256），分块步长16
     for (int k_step = 0; k_step < 256; k_step += 16) {
@@ -13,13 +13,13 @@ __global__ void bmm(half *A, half *B, float *C) {
 
         // 加载当前K块的A和B子矩阵
         for (int i = 0; i < 4; ++i) {
-            // A的索引：行由当前C块行决定，列按K分块
+            // A的索引:行由当前C块行决定，列按K分块
             int a_row = c_row_base + threadIdx.x;          // 行范围[0,127]
             int a_col = k_step + threadIdx.y * 4 + i;      // 列范围[0,255]
             int a_idx = a_row * 256 + a_col;
             a[i] = A[a_idx];
 
-            // B的索引：行按K分块，列由当前C块列决定
+            // B的索引:行按K分块，列由当前C块列决定
             int b_row = k_step + threadIdx.y * 4 + i;      // 行范围[0,255]
             int b_col = c_col_base + threadIdx.x;           // 列范围[0,511]
             int b_idx = b_row * 512 + b_col;

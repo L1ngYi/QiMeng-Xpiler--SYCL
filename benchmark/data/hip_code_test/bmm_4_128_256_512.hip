@@ -29,12 +29,12 @@ __global__ void bmm(half *A, half *B, float *C) {
         // 向量化加载A和B的子矩阵
         #pragma unroll
         for (int i = 0; i < 4; ++i) {
-            // A的索引：行由C块行决定，列按K分块
+            // A的索引:行由C块行决定，列按K分块
             int a_row = c_row_base + threadIdx.x;
             int a_col = k_step + threadIdx.y * 4 + i;
             a[i] = batch_A[a_row * LDA + a_col];
 
-            // B的索引：行按K分块，列由C块列决定
+            // B的索引:行按K分块，列由C块列决定
             int b_row = k_step + threadIdx.y * 4 + i;
             int b_col = c_col_base + threadIdx.x;
             b[i] = batch_B[b_row * LDB + b_col];

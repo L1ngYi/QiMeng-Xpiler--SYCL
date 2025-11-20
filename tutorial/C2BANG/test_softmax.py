@@ -1,4 +1,5 @@
 import json
+import logging
 
 from falcon.smt.stmt_split import ast_stmt_split
 from falcon.src.loop_transformation.loop_transformation import (
@@ -14,26 +15,26 @@ from falcon.src.post_processing.post_processing import (
     run_thread_binding,
 )
 
+logging.basicConfig(level=logging.INFO)
+
 
 def run_transcompile_code(file_name, source, target):
     with open(file_name, "r") as f:
         device_code = f.read()
 
-    print("[INFO]*********loop recovery: ", device_code)
     modi_code = ast_stmt_split(device_code, target)
-    print("[INFO]***********detensorization: ", modi_code)
+
     # loop transformation
     fusion_code = run_loop_fusion(modi_code)
-    print("[INFO]***********fusion: ", fusion_code)
+
     code = run_split_annotation(fusion_code)
-    print("[INFO]***********split annotate: ", code)
+
     split_code = run_apply_split(code)
-    print("[INFO]***********split: ", split_code)
+
     # postprocessing
     final_code = run_thread_binding(split_code, target)
-    print("[Binding code]: ", final_code)
+
     code = run_code_decoration(final_code)
-    print("[INFO] decorate code: ", code)
 
     op_pragma = json.load(
         open("./falcon/documents/operation_bang_C_instruction_map.json", "r")

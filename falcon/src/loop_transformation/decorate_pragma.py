@@ -29,6 +29,7 @@ Return the full C++ code, with the appropriate #pragma loop_split(...) inserted 
 
 SPLIT_PRAGMA_DEMO = """
 
+
 ### Example 1:
 Input code:
 ```cpp
@@ -42,7 +43,7 @@ void mul(float* A, float* B, float* C) {
 Output code:
 ```cpp
 void mul(float* A, float* B, float* C) {
-    #pragma loop_split(factor)
+    #pragma loop_split({factor})
     for (int i = 0; i < 60; i++) {
         A[i] = B[i] * C[i];
     }
@@ -66,7 +67,7 @@ Output code:
 ```cpp
 void add(float* A, float* B, float* C, int N, int M) {
     for (int i = 0; i < N; i++) {
-        #pragma loop_split(factor)
+        #pragma loop_split({factor})
         for (int j = 0; j < M; j++) {
             C[i * M + j] = A[i * M + j] + B[i * M + j];
         }
@@ -90,7 +91,7 @@ Output code:
 extern "C" __mlu_global__ void add(float *lhs, float *rhs, float *out) {
     __nram__ float buf[512];
     // ...data copy...
-    #pragma loop_split(factor)
+    #pragma loop_split({factor})
     for (int k = 0; k < 512; ++k) {
         buf[k] = lhs[k] + rhs[k];
     }

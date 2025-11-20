@@ -91,7 +91,7 @@ extern "C" void mha(float *Q, float *K, float *V, float *output) {
               _mm_loadu_si128(reinterpret_cast<const __m128i *>(arr_b_16));
 
           // 使用_mm_dpbusds_epi32进行乘加操作 (VNNI)
-          acc = _mm_dpbusds_epi32(acc, _a, _b); // 执行乘加操作：acc += a * b
+          acc = _mm_dpbusds_epi32(acc, _a, _b); // 执行乘加操作:acc += a * b
 
           // 将累加结果存储到arr_d_4中
           _mm_storeu_si128(reinterpret_cast<__m128i *>(arr_d_4), acc);

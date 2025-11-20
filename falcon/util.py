@@ -1,3 +1,4 @@
+import logging
 import os
 import re
 
@@ -230,12 +231,16 @@ def parse_code_ast(code, target=None):
     filename = "./local_parse_test.c"
     with open(filename, "w") as f:
         f.write(code)
-    ast = parse_file(
-        filename,
-        use_cpp=True,
-        cpp_path="cpp",
-        cpp_args=["-Iutils/fake_libc_include"],
-    )
+    try:
+        ast = parse_file(
+            filename,
+            use_cpp=True,
+            cpp_path="cpp",
+            cpp_args=["-Iutils/fake_libc_include"],
+        )
+    except Exception as e:
+        logging.error(f"parse_file failed: {e}")
+        ast = None
     os.remove(filename)
     return ast
 
