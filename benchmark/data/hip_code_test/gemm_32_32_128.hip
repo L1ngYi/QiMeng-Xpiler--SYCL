@@ -2,8 +2,8 @@ __global__ void gemm(half *A, half *B, float *C) {
     using float16x4 = __attribute__((__vector_size__(4 * sizeof(float16_t)))) float16_t;
     using floatx4 = __attribute__((__vector_size__(4 * sizeof(float)))) float;
     // 计算当前线程块处理的C矩阵块位置
-    const int c_row_base = blockIdx.y * 16;  // 行分块：32/16=2块
-    const int c_col_base = blockIdx.x * 16;  // 列分块：128/16=8块
+    const int c_row_base = blockIdx.y * 16;  // 行分块:32/16=2块
+    const int c_col_base = blockIdx.x * 16;  // 列分块:128/16=8块
 
     // 初始化累加器
     floatx4 d = {0.0f};

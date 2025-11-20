@@ -26,7 +26,7 @@ extern "C" void bmm(float *A, float *B, float *result) {
               _mm512_loadu_si512(reinterpret_cast<const void *>(arr_b));
 
           // 使用_mm512_dpbusd_epi32进行乘加操作 (AVX512 VNNI)
-          acc = _mm512_dpbusd_epi32(acc, _a, _b); // 执行乘加操作：acc += a * b
+          acc = _mm512_dpbusd_epi32(acc, _a, _b); // 执行乘加操作:acc += a * b
         }
 
         // 将累加结果存储到arr_d中

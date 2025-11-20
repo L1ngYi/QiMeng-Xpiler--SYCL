@@ -13,13 +13,13 @@ __global__ void bmm(half* A, half* B, float* C) {
 
         // 加载当前K块的A和B子矩阵到寄存器
         for (int i = 0; i < 4; ++i) {
-            // A的索引：行由当前C块行决定，列按K分块
+            // A的索引:行由当前C块行决定，列按K分块
             int a_row = c_row_base + threadIdx.x;
             int a_col = k_step + threadIdx.y * 4 + i;
             int a_idx = a_row * 512 + a_col;
             a[i] = A[a_idx];
 
-            // B的索引：行按K分块，列由当前C块列决定
+            // B的索引:行按K分块，列由当前C块列决定
             int b_row = k_step + threadIdx.y * 4 + i;
             int b_col = c_col_base + threadIdx.x;
             int b_idx = b_row * 512 + b_col;

@@ -56,17 +56,17 @@ def run_loop_reorder(code):
     return extract_code(content)
 
 
-def run_split_annotation(code):
+def run_split_annotation(code, factor=32):
     PROMPT = """
     {SYSTEM_PROMPT}
     {SPLIT_PRAGMA_PROMPT}
     {SPLIT_PRAGMA_DEMO}
     """
     PROMPT = PROMPT.replace("{SYSTEM_PROMPT}", SYSTEM_PROMPT)
-
     PROMPT = PROMPT.replace("{SPLIT_PRAGMA_PROMPT}", SPLIT_PRAGMA_PROMPT)
     PROMPT = PROMPT.replace("{SPLIT_PRAGMA_DEMO}", SPLIT_PRAGMA_DEMO)
     PROMPT = PROMPT.replace("{code}", code)
+    PROMPT = PROMPT.replace("{factor}", str(factor))  # 关键：把factor传进去
     content = invoke_llm(PROMPT)
     return extract_code(content)
 

@@ -4,12 +4,12 @@ from falcon.mcts.actions import actions as ActionSpace
 def generate_prior_from_src(code, src_target, dst_target):
     """根据源代码中出现的特定关键词，为各个转换 pass 分配优先级。
 
-    参数：
+    参数:
       code: 字符串，源代码内容。
       src_target: 源平台类型（"cuda" 或 "bangc"）。
       dst_target: 目标平台类型（"cuda" 或 "bangc"）。
 
-    返回：
+    返回:
       logit_prior: 包含 (action, priority) 元组的列表，其中 priority 为 "high" 或 "default"。
     """
     logit_prior = [0.2] * len(ActionSpace)

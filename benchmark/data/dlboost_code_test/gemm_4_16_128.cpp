@@ -21,7 +21,7 @@ extern "C" void gemm(float *A, float *B, float *result) {
       __m128i _b = _mm_loadu_si128(reinterpret_cast<const __m128i *>(arr_b));
 
       // 使用_mm_dpbusds_epi32进行乘加操作 (VNNI)
-      acc = _mm_dpbusds_epi32(acc, _a, _b); // 执行乘加操作：acc += a * b
+      acc = _mm_dpbusds_epi32(acc, _a, _b); // 执行乘加操作:acc += a * b
 
       // 将累加结果存储到arr_d中
       _mm_storeu_si128(reinterpret_cast<__m128i *>(arr_d), acc);

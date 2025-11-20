@@ -1,4 +1,5 @@
 import json
+import logging
 import re
 
 from falcon.client import invoke_llm
@@ -17,7 +18,7 @@ from falcon.src.post_processing.post_processing_prompt import (
     THREAD_BINDING_PROMPT_CUDA,
 )
 from falcon.src.prompt.prompt import SYSTEM_PROMPT
-from falcon.util import make_full_func
+from falcon.util import extract_code, make_full_func
 
 
 def run_thread_binding(code, target):
@@ -45,11 +46,7 @@ def run_thread_binding(code, target):
     PROMPT = PROMPT.replace("{cpp_code}", code)
 
     content = invoke_llm(PROMPT)
-    match = re.search(r"```[a-zA-Z]*\n(.*?)```", content, re.S)
-    if match:
-        code_content = match.group(1).strip()
-        return make_full_func(code_content, target)
-    return None
+    return extract_code(content)
 
 
 def get_operation_content(code):
@@ -116,8 +113,14 @@ def replace_operation_with_intrinsic(code, op_pragma):
                 f"Output operands and memory spaces length mismatch for operation '{op_name}' "
                 f"({len(output_operands)} operands vs {len(output_spaces)} spaces)."
             )
-        input_map = {operand: space for operand, space in zip(input_operands, input_spaces)}
-        output_map = {operand: space for operand, space in zip(output_operands, output_spaces)}
+        input_map = {
+            operand: space
+            for operand, space in zip(input_operands, input_spaces)
+        }
+        output_map = {
+            operand: space
+            for operand, space in zip(output_operands, output_spaces)
+        }
         space_map = {"input": input_map, "output": output_map}
         code = re.sub(pragma_pattern, pragma_val, code)
         space_maps.append(space_map)
@@ -196,17 +199,17 @@ def run_cache_process(code, space_maps, target):
             f"({len(intrinsic_list)} intrinsics vs {len(space_maps)} spaces)."
         )
     # Iterate over each intrinsic found in the code
-    for op, space_map in zip(intrinsic_list, space_maps):
+    for _, space_map in zip(intrinsic_list, space_maps):
         for key, value in space_map["input"].items():
+            logging.info(f"Start cache read: buffer={key}, space={value}")
             cache_read_prompt = generate_cache_read_prompt(key, value, code)
             content = invoke_llm(cache_read_prompt)
-            match = re.search(r"```[a-zA-Z]*\n(.*?)```", content, re.S)
-            code = match.group(1) if match else code
+            code = extract_code(content)
         for key, value in space_map["output"].items():
+            logging.info(f"Start cache write: buffer={key}, space={value}")
             cache_write_prompt = generate_cache_write_prompt(key, value, code)
             content = invoke_llm(cache_write_prompt)
-            match = re.search(r"```[a-zA-Z]*\n(.*?)```", content, re.S)
-            code = match.group(1) if match else code
+            code = extract_code(content)
     return make_full_func(code, target)
 
 
@@ -228,11 +231,7 @@ def tensorization(op, code, document):
     PROMPT = PROMPT.replace("{op}", op)
 
     content = invoke_llm(PROMPT)
-    match = re.search(r"```[a-zA-Z]*\n(.*?)```", content, re.S)
-    if match:
-        code_content = match.group(1).strip()
-        return make_full_func(code_content)
-    return None
+    return extract_code(content)
 
 
 def get_operation_words(pragma_line):
@@ -327,12 +326,7 @@ def run_tensorization(code, target):
 def run_code_decoration(code):
     PROMPT = DECORATION_PROMPT.replace("{cpp_code}", code)
     content = invoke_llm(PROMPT)
-
-    match = re.search(r"```[a-zA-Z]*\n(.*?)```", content, re.S)
-    if match:
-        code_content = match.group(1).strip()
-        return code_content
-    return None
+    return extract_code(content)
 
 
 def double_buffer(code):
@@ -356,11 +350,8 @@ def double_buffer(code):
     PROMPT = PROMPT.replace("{DOUBLE_BUFFER_DEMO}", DOUBLE_BUFFER_DEMO)
     PROMPT = PROMPT.replace("{code}", code)
     content = invoke_llm(PROMPT)
-    match = re.search(r"```[a-zA-Z]*\n(.*?)```", content, re.S)
-    if match:
-        code_content = match.group(1).strip()
-        return code_content
-    return None
+    code = extract_code(content)
+    return code
 
 
 def run_double_buffer(code, target):

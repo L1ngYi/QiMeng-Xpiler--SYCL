@@ -81,7 +81,7 @@ Return the transformed C++ code after applying loop reorder.
 """
 
 LOOP_REORDER_DEMO = """
-Example：
+Example:
 
 ### Original Code:
 ```cpp

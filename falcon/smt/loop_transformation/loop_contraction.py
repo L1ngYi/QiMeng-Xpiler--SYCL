@@ -5,9 +5,9 @@ from falcon.util import NodeTransformer, generate_code, parse_code_ast
 
 
 class LoopNestFusionVisitor(NodeTransformer):
-    """把两段相同循环域的 for-loop 融合成一个： for(...) {   // outer1 for(...) { /* body1 */
+    """把两段相同循环域的 for-loop 融合成一个: for(...) {   // outer1 for(...) { /* body1 */
     } } for(...) {   // outer2，与 outer1 的 init/cond/next 相同 for(...) { /* body2
-    */ } } 变成： for(...) { for(...) { /* body1 */ } for(...) { /* body2 */ }
+    */ } } 变成: for(...) { for(...) { /* body1 */ } for(...) { /* body2 */ }
     }"""
 
     def visit_Compound(self, node):

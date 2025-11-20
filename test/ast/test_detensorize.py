@@ -88,7 +88,7 @@ class TensorCoreToScalar(NodeTransformer):
         if name.endswith("load_matrix_sync"):
             frag, ptr, stride = args
             # 把 frag 当作一个局部 C 数组 a_frag.x[0..M*N-1]，
-            # 将从全局内存加载改写成双层 loop：
+            # 将从全局内存加载改写成双层 loop:
             # for i in 0..M-1: for j in 0..K-1: a_frag.x[i*K+j] = <*(ptr +
             # i*stride + j)>
             loop_i = c_ast.For(
@@ -370,7 +370,7 @@ def preprocess(code: str) -> str:
 
 
 def postprocess(code: str) -> str:
-    # 还原：临时符号 → 原 CUDA 关键字
+    # 还原:临时符号 → 原 CUDA 关键字
     for pat, tmp in mapping.items():
         # pat 是正则，这里直接写字面量
         orig = pat.replace(r"\b", "").replace("\\.", ".")
