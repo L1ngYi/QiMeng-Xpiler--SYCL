@@ -63,5 +63,7 @@ if __name__ == "__main__":
     )
     print(code)
 
-    # code = falcon_postprocess_pipeline(code, cuda_file_name + "cu", target="cuda")
-    # print(code)
+    code = falcon_postprocess_pipeline(
+        code, cuda_file_name + "cu", target="cuda"
+    )
+    print(code)

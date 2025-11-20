@@ -201,6 +201,13 @@ def remove_target_prefix(code, target=None):
 
 def get_target(code, target=None):
     # Determine the file type and set the target.
+    if target is not None:
+        return target, {
+            "mlu": ".mlu",
+            "cuda": ".cu",
+            "hip": ".hip",
+            "cpu": ".cpp",
+        }.get(target, ".cpp")
     if (
         "__mlu_global" in code
         or "__bang" in code
@@ -218,7 +225,7 @@ def get_target(code, target=None):
 
 
 def make_full_func(code, target=None):
-    target, file_type = get_target(code, target)
+    target, _ = get_target(code, target)
     if target == "mlu":
         code = add_memory_prefix(code)
     elif target in ["cuda", "hip"]:

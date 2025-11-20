@@ -30,35 +30,35 @@ class ThreadBindingTransformer(NodeTransformer):
 
     def visit_For(self, node):
         self.current_depth += 1
-        loop_var = (
-            node.init.decls[0].name
-            if isinstance(node.init, c_ast.DeclList)
-            else None
-        )
-        extend = int(node.cond.right.value)
+        try:
+            loop_var = (
+                node.init.decls[0].name
+                if isinstance(node.init, c_ast.DeclList)
+                else None
+            )
+            extend = int(node.cond.right.value)
 
-        # If the loop variable is a bound variable, return the loop body.
-        if (
-            self.target == "mlu"
-            and self.parallel_loops >= 2
-            and self.current_depth == 1
-        ):
-            thread_var = self._generate_thread_var(extend, 4)
-            new_node = self._generate_new_node(thread_var, node)
-            self.binding_map[loop_var] = thread_var
-            return self.generic_visit(new_node)
+            # If the loop variable is a bound variable, return the loop body.
+            if (
+                self.target == "mlu"
+                and self.parallel_loops >= 2
+                and self.current_depth == 1
+            ):
+                thread_var = self._generate_thread_var(extend, 4)
+                new_node = self._generate_new_node(thread_var, node)
+                self.binding_map[loop_var] = thread_var
+                return self.generic_visit(new_node)
 
-        elif (
-            self.target == "cuda"
-            or self.target == "hip"
-            and self.current_depth == 1
-        ):
-            thread_var = self._generate_thread_var(extend, 1024)
-            new_node = self._generate_new_node(thread_var, node)
-            self.binding_map[loop_var] = thread_var
-            return self.generic_visit(new_node)
+            # For CUDA/HIP only bind when at the outermost loop (depth==1)
+            if (self.target in ("cuda", "hip")) and self.current_depth == 1:
+                thread_var = self._generate_thread_var(extend, 1024)
+                new_node = self._generate_new_node(thread_var, node)
+                self.binding_map[loop_var] = thread_var
+                return self.generic_visit(new_node)
 
-        return self.generic_visit(node)
+            return self.generic_visit(node)
+        finally:
+            self.current_depth -= 1
 
     def _generate_thread_var(self, extend, limit):
         if extend <= limit:
@@ -108,6 +108,13 @@ class LoopVisitor(c_ast.NodeVisitor):
 
 
 def ast_thread_binding(code, target="mlu"):
+    # Simple validation: only accept these targets
+    allowed_targets = ["mlu", "cuda", "hip"]
+    if not isinstance(target, str):
+        raise ValueError(
+            f"Unsupported target '{target}'. Supported targets: {allowed_targets}"
+        )
+
     # Analytical code
     ast = parse_code_ast(code)
 
