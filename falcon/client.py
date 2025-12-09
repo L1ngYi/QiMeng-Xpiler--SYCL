@@ -34,7 +34,7 @@ def invoke_llm(prompt):
                     "content": prompt,
                 },
             ],
-            max_tokens=4096,
+            max_completion_tokens=4096,
             temperature=1.0,
             top_p=1.0,
             model=deployment,

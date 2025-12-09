@@ -13,7 +13,7 @@ This repository contains all the scripts and benchmarks needed to reproduce our 
 - **Linux** (Ubuntu 20.04+ recommended)  
 - **Python 3.10+**, with:
   - `openai`
-  - `torch` (with CUDA、Hip、DL Boost and/or MLU support as needed)
+  - `torch` (with CUDA、Hip、DL Boost support as needed)
 
 - **Bash** shell (for the `.sh` scripts)  
 - Credentials:
@@ -50,7 +50,6 @@ Both scripts will:
    - CUDA → `benchmark/evaluation/cuda_test/compilation.py`  
    - HIP  → `benchmark/evaluation/hip_test/compilation.py`  
    - CPU  → `benchmark/evaluation/dlboost_test/compilation.py`  
-   - MLU  → `benchmark/evaluation/mlu_test/compilation.py`  
 
 ---
 
@@ -60,7 +59,7 @@ We measure kernel throughput on various vendor libraries:
 
 ```bash
 python benchmark/perf/perf_oneAPI.py      # Intel oneAPI
-python benchmark/perf/perf_cndnn.py       # NVIDIA cuDNN
+python benchmark/perf/perf_cudnn.py       # NVIDIA cuDNN
 python benchmark/perf/perf_cnnl.py        # Cambricon CNNL
 python benchmark/perf/perf_rocblas.py     # AMD rocBLAS
 ```
@@ -100,7 +99,7 @@ Each will:
 ```
 .
 ├── benchmark/
-│   ├── data/                  # CUDA/HIP/CPU/MLU code samples
+│   ├── data/                  # CUDA/HIP/CPU code samples
 │   ├── evaluation/            # compile & test drivers per platform
 │   ├── perf/                  # vendor-library profiling scripts
 │   └── zero_shot/             # LLM translation with zero shot Python script
@@ -150,25 +149,25 @@ All scripts print progress bars and summary statistics. Refer to each script’s
 # Transcompiling
 Our transcompilation times range from 1.2 to 7.8 hours. To better showcase Falcon’s capabilities, we provide the following examples:
 
-**A quick start for transcompiling**. Take `Batch GEMM` operator from CUDA C to BANG C as an example, you can invoke Falcon like this:
+**A quick start for transcompiling**. Take `add` operator from cpu to cuda  as an example, you can invoke Falcon like this:
 ```
-python falcon/mcts/transcompile.py --source cuda --target mlu --file_name benchmark/data/cuda_code_test/bmm_4_128_128_128.cu
+python falcon/mcts/transcompile.py --source cpu --target cuda --file_name benchmark/data/cpp_code_test/add_1_15_64.cpp
 ```
 During execution, you’ll see log messages such as:
 ```
 Step: 12	Action: [8, 7]	Reward: 0.8930	Best Reward: 0.9435	Best action: [7]
 ```
-Once complete, the transcompiled code will be available in the ``cuda_mlu`` directory.
+Once complete, the transcompiled code will be available in the ``cpu_cuda`` directory.
 You can then evaluate its performance by running:
 ```
-python benchmark/perf/perf_mlu.py  --file_name ./cuda_mlu/bmm_4_128_128_128.mlu
+python benchmark/perf/perf_cuda.py  --file_name ./cpu_cuda/add_1_15_64.cpp
 ```
 This will output the performance result, for example:
 ```
 Execution time:  0.0062 ms
 ```
 **Comlplete evaluation**
-For complete evaluation, please run the corresponding scripts. For example, to evaluate code from CUDA C to BANG C shown in Figure 7, please use the following commands:
+For complete evaluation, please run the corresponding scripts. For example, to evaluate code from cpu to cuda shown in Figure 7, please use the following commands:
 ```
 cd Figure7
 python run.py

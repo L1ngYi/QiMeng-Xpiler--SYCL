@@ -144,7 +144,7 @@ def loop_contraction(file_name, code, source_platform, target_platform):
 
 
 def auto_bind(file_name, code, source_platform, target_platform):
-    if target_platform not in ["mlu", "cuda", "hip"]:
+    if target_platform not in ["cuda", "hip"]:
         return code
 
     final_code = run_thread_binding(code, target_platform)
@@ -163,12 +163,6 @@ def auto_bind(file_name, code, source_platform, target_platform):
 def auto_cache(file_name, code, source_platform, target_platform):
     code = run_code_decoration(code)
     op_pragma = {}
-    if target_platform == "mlu":
-        op_pragma = json.load(
-            open(
-                "./falcon/documents/operation_bang_C_instruction_map.json", "r"
-            )
-        )
     code, space_maps = replace_operation_with_intrinsic(code, op_pragma)
     # If no need to cache, just return origin code
     if space_maps is None:
@@ -203,20 +197,7 @@ def auto_tensorization(file_name, code, source_platform, target_platform):
 
 
 def auto_pipeline(file_name, code, source_platform, target_platform):
-    if target_platform not in ["mlu"]:
-        return code
-
-    final_code = run_double_buffer(code, target_platform)
-    success, output = unit_test(file_name, final_code)
-    if success:
-        return final_code
-
-    for i in range(5):
-        final_code = fix_computation_code(code, final_code, output)
-        success, output = unit_test(file_name, final_code)
-        if success:
-            return final_code
-    return final_code
+    return code
 
 
 actions = [
@@ -234,25 +215,4 @@ actions = [
 ]
 
 if __name__ == "__main__":
-    code = """
-    __global__ void __launch_bounds__(1024)
-    add(float *__restrict__ A, float *__restrict__ B,
-        float *__restrict__ T_add) {
-        if (((((int)blockIdx.x) * 1024) + ((int)threadIdx.x)) < 2309) {
-            T_add[((((int)blockIdx.x) * 1024) + ((int)threadIdx.x))] =
-                (A[((((int)blockIdx.x) * 1024) + ((int)threadIdx.x))] +
-                B[((((int)blockIdx.x) * 1024) + ((int)threadIdx.x))]);
-        }
-    }
-    """
-    source_platform = "cuda"
-    target_platform = "mlu"
-    file_name = "benchmark/data/cuda_code_test/add_18_128.cu"
-    selected_function = random.choice(actions)
-    # Invoke the randomly selected function.
-    result = selected_function(
-        file_name, code, source_platform, target_platform
-    )
-
-    # Output result
-    print("运行结果:", result)
+    pass

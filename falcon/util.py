@@ -80,11 +80,6 @@ def add_memory_prefix(code):
     if "memcpy" in modified_code and "__memcpy" not in modified_code:
         modified_code = modified_code.replace("memcpy", "__memcpy")
 
-    if "extern" in code:
-        return re.sub(r'(extern\s+"C"\s+)(void)', r"\1__mlu_global__ \2", code)
-    else:
-        return 'extern "C" __mlu_global__ ' + code
-
 
 def add_parallel_variable_prefix(code):
     code = re.sub(r"threadIdxx", "threadIdx.x", code)
@@ -128,7 +123,6 @@ def add_parallel_variable_prefix(code):
 def remove_target_prefix(code, target=None):
     patterns = [
         (r'extern "C"\s+', ""),  # Remove `extern "C"`.
-        (r"__mlu_global__\s+", ""),  # Remove `__mlu_global__`.
         (r"\b__nram__\s+", ""),  # Remove `__nram__`.
         (r"\b__wram__\s+", ""),  # Remove `__wram__`.
         (r"__global__\s+", ""),  # Remove `__global__`.
@@ -203,19 +197,11 @@ def get_target(code, target=None):
     # Determine the file type and set the target.
     if target is not None:
         return target, {
-            "mlu": ".mlu",
             "cuda": ".cu",
             "hip": ".hip",
             "cpu": ".cpp",
         }.get(target, ".cpp")
-    if (
-        "__mlu_global" in code
-        or "__bang" in code
-        or "coreId" in code
-        or "__nram__" in code
-    ):
-        target, file_type = "mlu", ".mlu"
-    elif target == "hip" and ("__global__" in code or "threadIdx.x" in code):
+    if target == "hip" and ("__global__" in code or "threadIdx.x" in code):
         target, file_type = "hip", ".hip"
     elif "__global__" in code or "threadIdx.x" in code or "wmma" in code:
         target, file_type = "cuda", ".cu"
@@ -226,9 +212,7 @@ def get_target(code, target=None):
 
 def make_full_func(code, target=None):
     target, _ = get_target(code, target)
-    if target == "mlu":
-        code = add_memory_prefix(code)
-    elif target in ["cuda", "hip"]:
+    if target in ["cuda", "hip"]:
         code = add_parallel_variable_prefix(code)
     return code
 

@@ -174,7 +174,7 @@ Application Scenario:
 Tensor contraction is commonly applied in scenarios where two or more loops operate over dimensions with identical sizes and memory strides. This is particularly useful in optimizing tensor operations in deep learning models, such as matrix multiplications, convolutions, and backpropagation. By reducing the number of loops, tensor contraction helps minimize the overhead of loop management and improves the efficiency of data accesses, which is critical in handling large-scale tensor computations in fields like scientific computing, machine learning, and quantum physics.
 
 Note:
-Please apply tensor contraction to the following complete C/C++ kernel function (it may be annotated with `__mlu_global__`, `__global__`, or similar).
+Please apply tensor contraction to the following complete C/C++ kernel function.
 Return the **entire** transformed function—signature, qualifiers, all braces, and any comments—wrapped in a ```cpp code block. Do **not** output only a fragment.
 """
 

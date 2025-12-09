@@ -33,23 +33,6 @@ extern "C" __global__ void matmul(half *A, half *B, float *D)
 	}
 }
 ```
-MLU
-```
-extern "C" __mlu_global__ void matmul(half* data, half* filter, float* output) {
-  __nram__ half date_block[768];
-  __wram__ half filter_block[65536];
-  for (int i = 0; i < 64; ++i) {
-    for (int j = 0; j < 8; ++j) {
-      __memcpy(date_block, data + i * 4096 + j * 512, 1024, GDRAM2NRAM);
-      for (int k = 0; k < 4; ++k) {
-        __memcpy(filter_block, filter + k * 128, 256, GDRAM2WRAM, 256, 1024, 511);
-        __bang_mlp(date_block + 256, date_block, filter_block, 512, 128, 0);
-        __memcpy(output i * 4096 + j * 512 + k * 128, date_block + 256, 512, NRAM2GDRAM);
-      }
-    }
-  }
-}
-```
 HIP
 ```
 extern "C" __global__ void matmul(half *A, half *B, float *C) {

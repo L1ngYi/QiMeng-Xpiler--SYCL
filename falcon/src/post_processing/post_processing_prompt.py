@@ -27,58 +27,6 @@ Additionally, existing cache reads should not be removed.
 - Do not add attribute((aligned(64))) or any alignment attribute to the buffer declaration. The buffer should be declared simply as {NAMESPACE} float A_{CACHE_NAME}[size]; without any additional attributes.
 """
 
-CACHE_READ_DEMO = """
-### Example Input:
-```c
-for (int i = 0; i < 32; i++) {
-    #pragma intrinsic(__bang_add(input[Nram, Nram], output[Nram]))
-    for (int j = 0; j < 48; j++) {
-        C[i * 48 + j] = A[i * 48 + j] + B[i * 48 + j];
-    }
-}
-```
-
-### Example Output:
-```c
-for (int i = 0; i < 32; i++) {
-    {NAMESPACE} float A_{CACHE_NAME}[48];
-    // Cache read of A into {CACHE_NAME} memory
-    for (int j = 0; j < 48; j++) {
-        A_{CACHE_NAME}[j] = A[i * 48 + j];
-    }
-
-    #pragma intrinsic(__bang_add(input[Nram, Nram], output[Nram]))
-    for (int j = 0; j < 48; j++) {
-        C[i * 48 + j] = A_{CACHE_NAME}[j] + B[i * 48 + j]; // Use cached version of A
-    }
-}
-```
-
-### Example Input:
-```c
-#pragma intrinsic(__bang_add(input[Nram, Nram], output[Nram]))
-for (int j = 0; j < 64; j++) {
-    C[j] = A[j] + B[j];
-}
-
-```
-
-### Example Output:
-```c
-{NAMESPACE} float A_{CACHE_NAME}[64];
-// Cache read of A into {CACHE_NAME} memory
-for (int j = 0; j < 64; j++) {
-    A_{CACHE_NAME}[j] = A[j];
-}
-
-#pragma intrinsic(__bang_add(input[Nram, Nram], output[Nram]))
-for (int j = 0; j < 64; j++) {
-    C[j] = A_{CACHE_NAME}[j] + B[j]; // Use cached version of A
-}
-
-```
-"""
-
 CACHE_WRITE_PROMPT = """
 Cache Write:
 You are tasked with performing an optimization on C code that mimics the effect of `cache_write` from TVM in C for loops.
@@ -110,55 +58,6 @@ Additionally, existing cache reads should not be removed.
 - Do not add attribute((aligned(64))) or any alignment attribute to the buffer declaration. The buffer should be declared simply as {NAMESPACE} float A_{CACHE_NAME}[size]; without any additional attributes.
 """
 
-CACHE_WRITE_DEMO = """
-### Example Input:
-```c
-for (int i = 0; i < 32; i++) {
-    #pragma intrinsic(__bang_add(input[Nram, Nram], output[Nram]))
-    for (int j = 0; j < 48; j++) {
-        C[i * 48 + j] = A[i * 48 + j] + B[i * 48 + j];
-    }
-}
-```
-
-### Example Output:
-```c
-
-
-for (int i = 0; i < 32; i++) {
-    {NAMESPACE} float C_{CACHE_NAME}[48];
-    #pragma intrinsic(__bang_add(input[Nram, Nram], output[Nram]))
-    for (int j = 0; j < 48; j++) {
-        C_{CACHE_NAME}[j] = A[i * 48 + j] + B[i * 48 + j]; // Store result in {CACHE_NAME} cache
-    }
-    // Write back the cached results to C
-    for (int j = 0; j < 48; j++) {
-        C[i * 48 + j] = C_{CACHE_NAME}[j]; // Write cached result to original buffer
-    }
-}
-```
-
-### Example Input:
-```c
-#pragma intrinsic(__bang_add(input[Nram, Nram], output[Nram]))
-for (int j = 0; j < 64; j++) {
-    C[j] = A[j] + B[j];
-}
-```
-
-### Example Output:
-```c
-{NAMESPACE} float C_{CACHE_NAME}[64];
-#pragma intrinsic(__bang_add(input[Nram, Nram], output[Nram]))
-for (int j = 0; j < 64; j++) {
-    C_{CACHE_NAME}[j] = A[j] + B[j]; // Store result in {CACHE_NAME} cache
-}
-// Write back the cached results to C
-for (int j = 0; j < 64; j++) {
-    C[j] = C_{CACHE_NAME}[j]; // Write cached result to original buffer
-}
-```
-"""
 
 TENSORIZATION_PROMPT = """
 Tensorization
@@ -170,32 +69,6 @@ Application Scenario:
 - Tensorization is widely used in deep learning frameworks to speed up matrix multiplications, convolutions, and other tensor operations by leveraging SIMD. For example, it can be used to vectorize the processing of large batches of input data, improving performance on CPUs, GPUs, and other accelerators.
 
 - SIMD-based tensorization can be applied to common linear algebra kernels such as matrix-vector multiplications (GEMV), matrix-matrix multiplications (GEMM), and vector dot products. SIMD instructions accelerate these operations by processing multiple elements of vectors or matrices in parallel.
-"""
-
-TENSORIZATION_MLU_DEMO = """
-Usage Examples 1:
-// before:
-#pragma operation(memory(input[output_nram], output[output]))
-for (int i = 0; i < 512; ++i) {
-    for (int j = 0; j < 512; ++j) {
-        output[i * 512 + j] = output_nram[i * 512 + j];
-    }
-}
-
-// after:
-__memcpy(output, output_nram, 512 * 512 * 4, NRAM2GDRAM);
-
-Usage Examples 2:
-// before:
-#pragma operation(memory(input[output], output[output_nram]))
-for (int i = 0; i < 512; ++i) {
-    for (int j = 0; j < 512; ++j) {
-        output_nram[i * 512 + j] = output[i * 512 + j];
-    }
-}
-
-// after:
-__memcpy(output_nram, output, 512 * 512 * 4, NRAM2GDRAM);
 """
 
 DOUBLE_BUFFER_PROMPT = """
@@ -210,58 +83,6 @@ Application Scenario:
 For example, while one batch of input data is being processed, the next batch can be loaded into memory.
 """
 
-DOUBLE_BUFFER_DEMO = """
-Usage Examples:
-input
-```
-__mlu_global__ void add(float* INPUT0, float* INPUT1, float* OUTPUT) {
-    __nram__ float INPUT0_N[64];
-    __nram__ float INPUT1_N[64];
-    __nram__ float OUTPUT_N[64];
-    #pragma software_pipeline
-    for (int i = 0; i < 2048; ++i) {
-        __memcpy(INPUT0_N, INPUT0 + (i * 64), 256, GDRAM2NRAM);
-        __memcpy(INPUT1_N, INPUT1 + (i * 64), 256, GDRAM2NRAM);
-        __bang_add(OUTPUT_N, INPUT0_N , INPUT1_N, 64);
-        __memcpy(OUTPUT + (i * 64), OUTPUT_N, 256, NRAM2GDRAM);
-    }
-}
-```
-
-output
-```
-__mlu_global__ void fvec_add_double_bufferingfloat* INPUT0, float* INPUT1, float*OUTPUT) {
-    __nram__ float INPUT0_N[128];
-    __nram__ float INPUT1_N[128];
-    __nram__ float OUTPUT_N[128];
-    __memcpy_async(INPUT0_N, INPUT0, 256, GDRAM2NRAM);
-    __asm__ volatile("sync;");
-    __memcpy_async(INPUT1_N, INPUT1, 256, GDRAM2NRAM);
-    __asm__ volatile("sync;");
-    __memcpy_async(INPUT0_N + 64, INPUT0 + 64, 256, GDRAM2NRAM);
-    __memcpy_async(INPUT1_N + 64, INPUT1 + 64, 256, GDRAM2NRAM);
-    __bang_add(OUTPUT_N, INPUT0_N, INPUT1_N, 64);
-    __asm__ volatile("sync;");
-    for (int i_outer = 0; i_outer < 1023; ++i_outer) {
-        __memcpy_async(INPUT0_N, INPUT0 + ((i_outer * 128) + 128), 256,GDRAM2NRAM);
-        __memcpy_async(INPUT1_N, INPUT1 + ((i_outer * 128) + 128), 256,GDRAM2NRAM);
-        __bang_add(OUTPUT_N + 64, INPUT0_N + 64, INPUT1_N + 64, 64);
-        __memcpy_async(OUTPUT + (i_outer * 128), OUTPUT_N, 256,NRAM2GDRAM);
-        __asm__ volatile("sync;");
-        __memcpy_async(INPUT0_N + 64, INPUT0 + ((i_outer * 128) + 192),256, GDRAM2NRAM);
-        __memcpy_async(INPUT1_N + 64, INPUT1 + ((i_outer * 128) + 192),256, GDRAM2NRAM);
-        __bang_add(OUTPUT_N, INPUT0_N, INPUT1_N,64);
-        __memcpy_async(OUTPUT + ((i_outer * 128) + 64), OUTPUT_N + 64, 256,NRAM2GDRAM);
-        __asm__ volatile("sync;");
-    }
-
-    __bang_add(OUTPUT_N + 64, INPUT0_N + 64, INPUT1_N + 64,64);
-    __memcpy_async(OUTPUT + 130944, OUTPUT_N, 256, NRAM2GDRAM);
-    __asm__ volatile("sync;");
-    __memcpy_async(OUTPUT + 131008, OUTPUT_N + 64, 256, NRAM2GDRAM);
-    __asm__ volatile("sync;");}
-```
-"""
 
 THREAD_BINDING_PROMPT_CUDA = """
 Thread Binding
@@ -312,92 +133,6 @@ Please transform the following C++ by binding the parallel loops to GPU threads 
 - The variables `blockIdx.x` and `threadIdx` are built-in parallel variables and do not require initialization.
 """
 
-THREAD_BINDING_PROMPT_BANG = """
-Thread Binding
-
-Function Overview:
-You are tasked with identifying parallelizable loops in C++ code and binding them to the available clusters and cores on an NPU.
-The target NPU has 8 clusters and 4 cores per cluster. Your goal is to transform the input code by mapping the loops onto specific
-hardware resources (clusters and cores) for parallel execution.
-
-Target Hardware:
-
-8 clusters
-4 cores per cluster
-clusterId and coreId are built-in identifiers provided by the system — do not pass them as function arguments.
-(Think of them like blockIdx.x and threadIdx.x in CUDA.)
-
-
-Application Scenario:
-Use this prompt when you want to parallelize a computational task by binding one or more axes of a loop to the available cores in a NPU.
-This process accelerates the computation by exploiting the parallel nature of hardware accelerators.
-
-Input:
-The input is a C++/CUDA code snippet containing loops that can be parallelized. The goal is to bind these loops to cores and clusters on an NPU for parallel execution.
-The target hardware has 8 clusters and 4 cores per cluster, and the prompt will help map the loop dimensions accordingly.
-
-Output:
-The transformed code should include appropriate thread binding directives, ensuring that iterations of the loop are distributed across the clusters and cores of the NPU for parallel execution.
-
-
- ### Steps for the transformation:
- 1. **Identify parallelizable loops:** - Find the outermost or large loops suitable for parallelization. A loop is considered parallelizable if its iteration count is larger than the number of clusters (8) or cores (4).
-
- 2. **Replace loop variables with `clusterId` and `coreId`:** - For loops where the iteration count is larger than the number of clusters (8) or cores (4), replace the loop variables with `clusterId` and `coreId` respectively. - If the loop’s iteration count is smaller than 4, add condition checks to ensure proper core binding. For example, `if (clusterId < dim)`.
-
- 3. **Remove unnecessary loops:** - After replacing loop variables, remove the corresponding `for` loops for `clusterId` and `coreId`, and directly map iterations to hardware cores and clusters.
- 4. Ensure the original computation logic remains unchanged; only the loop variables should be replaced.
-
-{THREAD_BINDING_DEMO}
-
-### GPT Task:
-Please transform the following C++ by binding the parallel loops to NPU clusters and cores for efficient parallel computation.
-
-#### Input Code:
-{cpp_code}
-
-#### Output Code with Cluster Binding:
-```
-
-### Notes:
-- Replace the loop dimensions with `clusterId` and `coreId` where possible.
-- Do not pass clusterId and coreId as function parameters.
-- Ensure that the output code maintains the same computational logic while taking advantage of the parallel nature of the hardware.
-- The variables `clusterId` and `coreId` are built-in parallel variables and do not require initialization.
-"""
-
-
-THREAD_BINDING_DEMO_BANG = """
-### Example
-
-### Input Code:
-```cpp
-#pragma thread_binding
-for (int i = 0; i < 4; ++i) {
-    for (int j = 0; j < 4 j++) {
-        for (int k = 0; k <  7; k++) {
-            B[i * 4 * 7 + j * 7 + k] = A[i * 4 * 7 + j * 7 + k] + 1.0;
-        }
-    }
-}
-```
-
-### Output Code with Cluster and Core Binding:
-- Bind loops to **8 clusters** and **4 cores** on the NPU.
-- Ensure parallel execution across clusters and cores.
-
-Expected Output:
-
-```cpp
-if (clusterId < 4) {
-    if (coreId < 4) {
-        for (int k = 0; k <  7; k++) {
-            B[clusterId * 4 * 7 + coreId * 7 + k] = A[clusterId * 4 * 7 + coreId * 7 + k] + 1.0;
-        }
-    }
-}
-```
-"""
 
 THREAD_BINDING_DEMO_CUDA = """
 Usage Examples:

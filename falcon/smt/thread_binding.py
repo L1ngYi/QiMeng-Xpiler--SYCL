@@ -9,7 +9,6 @@ from falcon.util import (
 
 builtin_var = {
     "cuda": ["threadIdxx", "blockIdxx"],
-    "mlu": ["coreId", "clusterId"],
     "hip": ["threadIdxx", "blockIdxx"],
 }
 builtin_dim = {
@@ -22,7 +21,7 @@ builtin_dim = {
 
 # Temporarily, we will binding the outermost with thread
 class ThreadBindingTransformer(NodeTransformer):
-    def __init__(self, parallel_loops, target="mlu"):
+    def __init__(self, parallel_loops, target="cuda"):
         self.binding_map = {}
         self.parallel_loops = parallel_loops
         self.target = target
@@ -38,16 +37,6 @@ class ThreadBindingTransformer(NodeTransformer):
             )
             extend = int(node.cond.right.value)
 
-            # If the loop variable is a bound variable, return the loop body.
-            if (
-                self.target == "mlu"
-                and self.parallel_loops >= 2
-                and self.current_depth == 1
-            ):
-                thread_var = self._generate_thread_var(extend, 4)
-                new_node = self._generate_new_node(thread_var, node)
-                self.binding_map[loop_var] = thread_var
-                return self.generic_visit(new_node)
 
             # For CUDA/HIP only bind when at the outermost loop (depth==1)
             if (self.target in ("cuda", "hip")) and self.current_depth == 1:
@@ -107,9 +96,9 @@ class LoopVisitor(c_ast.NodeVisitor):
         self.current_depth -= 1
 
 
-def ast_thread_binding(code, target="mlu"):
+def ast_thread_binding(code, target="cuda"):
     # Simple validation: only accept these targets
-    allowed_targets = ["mlu", "cuda", "hip"]
+    allowed_targets = ["cuda", "hip"]
     if not isinstance(target, str):
         raise ValueError(
             f"Unsupported target '{target}'. Supported targets: {allowed_targets}"
@@ -132,19 +121,6 @@ def ast_thread_binding(code, target="mlu"):
 
 if __name__ == "__main__":
     # Sample code
-    code = """
-    void func() {
-        for (int i = 0; i < 4; ++i) {
-            for (int j = 0; j < 4; ++j) {
-                for (int k = 0; k < 7; ++k) {
-                    B[i * 4 * 7 + j * 7 + k] = A[i * 4 * 7 + j * 7 + k] + 1.0;
-                }
-            }
-        }
-    }
-    """
-    output_code = ast_thread_binding(code, target="mlu")
-    print(output_code)
 
     code = """
     void func() {
@@ -193,52 +169,4 @@ if __name__ == "__main__":
     }
     """
     output_code = ast_thread_binding(code, target="cuda")
-    print(output_code)
-
-    code = """
-    void softmax(float *A, float *T_softmax_norm)
-    {
-        for (int k = 0; k < 5; ++k)
-        {
-            float maxVal = A[k * 128];
-            for (int j = 1; j < 128; ++j)
-            {
-                if (A[(k * 128) + j] > maxVal)
-                {
-                    maxVal = A[(k * 128) + j];
-                }
-            }
-
-            float denom = 0.0f;
-            for (int j = 0; j < 128; ++j)
-            {
-                T_softmax_norm[(k * 128) + j] = expf(A[(k * 128) + j] - maxVal);
-            }
-
-            for (int j = 0; j < 128; ++j)
-            {
-                denom += T_softmax_norm[(k * 128) + j];
-            }
-
-            for (int j = 0; j < 128; ++j)
-            {
-                T_softmax_norm[(k * 128) + j] /= denom;
-            }
-        }
-    }
-    """
-    output_code = ast_thread_binding(code, target="mlu")
-    print(output_code)
-
-    code = """
-    void add(float *A, float *B, float *T_add)
-    {
-        for (int k = 0; k < 4; k++) {
-            for (int j = 0; j < 1024; j++) {
-            T_add[k * 1024 + j] = A[k * 1024 + j] + B[k * 1024 + j];
-            }
-        }
-    }
-    """
-    output_code = ast_thread_binding(code, target="mlu")
     print(output_code)

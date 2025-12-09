@@ -43,7 +43,6 @@ with gr.Blocks() as demo:
                 "Intel DL Boost",
                 "NVIDIA GPU",
                 "AMD MI",
-                "Cambricon MLU",
             ],
             label="Select source platform",
         )
@@ -55,7 +54,6 @@ with gr.Blocks() as demo:
                 "Intel DL Boost",
                 "NVIDIA GPU",
                 "AMD MI",
-                "Cambricon MLU",
             ],
             label="Select target platform",
         )

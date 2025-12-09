@@ -74,28 +74,4 @@ void add(float* A, float* B, float* C, int N, int M) {
     }
 }
 ```
-### Example 3:
-Input code:
-```
-extern "C" __mlu_global__ void add(float *lhs, float *rhs, float *out) {
-    __nram__ float buf[512];
-    // ...data copy...
-    for (int k = 0; k < 512; ++k) {
-        buf[k] = lhs[k] + rhs[k];
-    }
-    // ...write back...
-}
-```
-Output code:
-```
-extern "C" __mlu_global__ void add(float *lhs, float *rhs, float *out) {
-    __nram__ float buf[512];
-    // ...data copy...
-    #pragma loop_split({factor})
-    for (int k = 0; k < 512; ++k) {
-        buf[k] = lhs[k] + rhs[k];
-    }
-    // ...write back...
-}
-```
 """

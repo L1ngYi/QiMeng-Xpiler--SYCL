@@ -107,27 +107,6 @@ def constant_inline(code):
 
 
 if __name__ == "__main__":
-    # # Example code
-    code = """
-    void add_kernel(float *input1, float *input2, float *output)
-    {
-    int dim1 = 4;
-    int dim2 = 4;
-    int dim3 = 4;
-    int dim4 = 64;
-    for (int k = 0; k < dim3; k++)
-    {
-        for (int l = 0; l < dim4; l++)
-        {
-        int index = (((((clusterId * dim2) * dim3) * dim4) + ((coreId * dim3) * dim4)) + (k * dim4)) + l;
-        #pragma intrinsic(__bang_add(input[Nram, Nram], output[Nram]))
-        output[index] = input1[index] + input2[index];
-        }
-    }
-    }
-    """
-    code = constant_inline(code)
-    print(code)
 
     code = """
     void softmax(float *A, float *T_softmax_norm)

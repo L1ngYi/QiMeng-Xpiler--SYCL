@@ -6,16 +6,10 @@ import sys
 from benchmark.zero_shot.zero_shot_prompt import (
     CPU_TO_CUDA_PROMPT,
     CPU_TO_HIP_PROMPT,
-    CPU_TO_MLU_PROMPT,
     CUDA_TO_AMD_PROMPT,
     CUDA_TO_CPU_PROMPT,
-    CUDA_TO_MLU_PROMPT,
     HIP_TO_CPU_PROMPT,
     HIP_TO_CUDA_PROMPT,
-    HIP_TO_MLU_PROMPT,
-    MLU_TO_CPU_PROMPT,
-    MLU_TO_CUDA_PROMPT,
-    MLU_TO_HIP_PROMPT,
 )
 from falcon.client import invoke_llm
 
@@ -23,7 +17,6 @@ ext_map = {
     "cuda": "cu",
     "hip": "hip",
     "cpu": "cpp",
-    "mlu": "mlu",
 }
 
 
@@ -39,16 +32,10 @@ openai.api_key = api_key
 PROMPT_MAP = {
     ("cuda", "cpu"): CUDA_TO_CPU_PROMPT,
     ("cuda", "hip"): CUDA_TO_AMD_PROMPT,
-    ("cuda", "mlu"): CUDA_TO_MLU_PROMPT,
     ("hip", "cpu"): HIP_TO_CPU_PROMPT,
     ("hip", "cuda"): HIP_TO_CUDA_PROMPT,
-    ("hip", "mlu"): HIP_TO_MLU_PROMPT,
     ("cpu", "cuda"): CPU_TO_CUDA_PROMPT,
     ("cpu", "hip"): CPU_TO_HIP_PROMPT,
-    ("cpu", "mlu"): CPU_TO_MLU_PROMPT,
-    ("mlu", "cpu"): MLU_TO_CPU_PROMPT,
-    ("mlu", "cuda"): MLU_TO_CUDA_PROMPT,
-    ("mlu", "hip"): MLU_TO_HIP_PROMPT,
 }
 
 
@@ -67,20 +54,20 @@ def code_transform(input_code: str, prompt_template: str) -> str:
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Zero-shot code translation between CUDA/CPU/hip/MLU"
+        description="Zero-shot code translation between CUDA/CPU/hip"
     )
     parser.add_argument(
         "source_file", help="Path to the source code file to translate"
     )
     parser.add_argument(
         "source_platform",
-        choices=["cuda", "hip", "cpu", "mlu"],
-        help="Source platform (cuda | hip | cpu | mlu)",
+        choices=["cuda", "hip", "cpu"],
+        help="Source platform (cuda | hip | cpu)",
     )
     parser.add_argument(
         "dest_platform",
-        choices=["cuda", "hip", "cpu", "mlu"],
-        help="Destination platform (cuda | hip | cpu | mlu)",
+        choices=["cuda", "hip", "cpu"],
+        help="Destination platform (cuda | hip | cpu)",
     )
     args = parser.parse_args()
 

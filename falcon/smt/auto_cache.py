@@ -18,12 +18,7 @@ class LoopVisitor(c_ast.NodeVisitor):
     def visit_Compound(self, node):
         start_cache = False
         for item in node.block_items:
-            if isinstance(item, c_ast.Pragma) and "__bang" in item.string:
-                # The detection of a #pragma line indicates that caching
-                # operations are required.
-                start_cache = True
-                # self.cache_node[item.string] = None
-            elif isinstance(item, c_ast.For) and start_cache:
+            if isinstance(item, c_ast.For) and start_cache:
                 # self.cache_node[item.string] = item
                 self.cache_size.append(item.cond.right.value)
                 start_cache = False  # Reset flag
@@ -104,11 +99,7 @@ class CacheTransformationVisitor(NodeTransformer):
         new_block_items = []
         start_cache = False
         for item in node.block_items:
-            if isinstance(item, c_ast.Pragma) and "__bang" in item.string:
-                # The detection of a #pragma line indicates that caching
-                # operations are required.
-                start_cache = True
-            elif isinstance(item, c_ast.For) and start_cache:
+            if isinstance(item, c_ast.For) and start_cache:
                 reads, writes, inner_for = self.extract_index_expression(item)
                 # Insert cache read (read operation)
                 read_items = self.create_read_operations(inner_for, reads)
@@ -342,48 +333,4 @@ def ast_auto_cache(code, space_map, target="mlu"):
 
 
 if __name__ == "__main__":
-    # Example code and space_map
-    code = """
-    void __bang_add(float *A, float *C, float *B) {
-        #pragma __bang_add(input[Nram, Nram], output[Nram])
-        for (int i_add = 0; i_add < 128; i_add++) {
-            C[i_add] = A[i_add] + B[i_add];
-        }
-    }
-    """
-
-    space_map = [
-        {"input": {"A": "Nram", "B": "Nram"}, "output": {"C": "Nram"}}
-    ]
-    output_code = ast_auto_cache(code, space_map)
-
-    print(output_code)
-    code = """extern "C" __mlu_global__ void add_kernel(float *output, float *input1, float *input2)
-        {
-        if (coreId < 4)
-        {
-            #pragma intrinsic(__bang_add(input[Nram, Nram], output[Nram])))
-            for (int j = 0; j < 4; j++)
-            {
-            for (int k = 0; k < 128; k++)
-            {
-                for (int l = 0; l < 128; l++)
-                {
-                output[(((((coreId * 4) * 128) * 128) + ((j * 128) * 128)) + (k * 128)) + l] = input1[(((((coreId * 4) * 128) * 128) + ((j * 128) * 128)) + (k * 128)) + l] + input2[(((((coreId * 4) * 128) * 128) + ((j * 128) * 128)) + (k * 128)) + l];
-                }
-
-            }
-
-            }
-
-        }
-        }
-       """
-    space_map = [
-        {
-            "input": {"input1": "Nram", "input2": "Nram"},
-            "output": {"output": "Nram"},
-        }
-    ]
-    output_code = ast_auto_cache(code, space_map)
-    print(output_code)
+    pass

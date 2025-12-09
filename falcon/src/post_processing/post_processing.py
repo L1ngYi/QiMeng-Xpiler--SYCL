@@ -4,22 +4,16 @@ import re
 
 from falcon.client import invoke_llm
 from falcon.src.post_processing.post_processing_prompt import (
-    CACHE_READ_DEMO,
     CACHE_READ_PROMPT,
-    CACHE_WRITE_DEMO,
     CACHE_WRITE_PROMPT,
     DECORATION_PROMPT,
-    DOUBLE_BUFFER_DEMO,
     DOUBLE_BUFFER_PROMPT,
     TENSORIZATION_PROMPT,
-    THREAD_BINDING_DEMO_BANG,
     THREAD_BINDING_DEMO_CUDA,
-    THREAD_BINDING_PROMPT_BANG,
     THREAD_BINDING_PROMPT_CUDA,
 )
 from falcon.src.prompt.prompt import SYSTEM_PROMPT
 from falcon.util import extract_code, make_full_func
-from falcon.src.intrinsic_retrieval import retrieve_documentation
 
 def run_thread_binding(code, target):
     PROMPT = """
@@ -37,9 +31,6 @@ def run_thread_binding(code, target):
     if target == "cuda" or target == "hip":
         prompt_demo = THREAD_BINDING_DEMO_CUDA
         THREAD_BINDING_PROMPT = THREAD_BINDING_PROMPT_CUDA
-    elif target == "mlu":
-        prompt_demo = THREAD_BINDING_DEMO_BANG
-        THREAD_BINDING_PROMPT = THREAD_BINDING_PROMPT_BANG
 
     PROMPT = PROMPT.replace("{THREAD_BINDING_PROMPT}", THREAD_BINDING_PROMPT)
     PROMPT = PROMPT.replace("{THREAD_BINDING_DEMO}", prompt_demo)
@@ -163,7 +154,6 @@ def generate_cache_read_prompt(buffer, space, code):
     PROMPT = PROMPT.replace("{SYSTEM_PROMPT}", SYSTEM_PROMPT)
     PROMPT = PROMPT.replace("{CACHE_READ_PROMPT}", CACHE_READ_PROMPT)
     PROMPT = PROMPT.replace("{buffer}", buffer)
-    PROMPT = PROMPT.replace("{CACHE_READ_DEMO}", CACHE_READ_DEMO)
     PROMPT = PROMPT.replace("{CACHE_NAME}", space)
     PROMPT = PROMPT.replace("{CODE}", code)
     PROMPT = PROMPT.replace("{NAMESPACE}", NAMESPACE)
@@ -182,7 +172,6 @@ def generate_cache_write_prompt(buffer, space, code):
     PROMPT = PROMPT.replace("{SYSTEM_PROMPT}", SYSTEM_PROMPT)
     PROMPT = PROMPT.replace("{CACHE_WRITE_PROMPT}", CACHE_WRITE_PROMPT)
     PROMPT = PROMPT.replace("{buffer}", buffer)
-    PROMPT = PROMPT.replace("{CACHE_WRITE_DEMO}", CACHE_WRITE_DEMO)
     PROMPT = PROMPT.replace("{CACHE_NAME}", space)
     PROMPT = PROMPT.replace("{CODE}", code)
     PROMPT = PROMPT.replace("{NAMESPACE}", NAMESPACE)
@@ -246,81 +235,7 @@ def get_operation_words(pragma_line):
 
 def run_tensorization(code, target):
     op_list = get_operation_words(code)
-    if target == "mlu":
-        for op in op_list:
-            if "memory" in op:
-                op_document = """
-                __memcpy(void *dst, const void *src, unsigned int size, mluMemcpyDirection_t dir)
-                Copies <size> bytes data from source address <src> to destination address <dst>. The copy direction is specified by <dir>.
-
-                Parameters
-                [out] dst: The address of destination area.
-
-                [in] src: The address of source area.
-
-                [in] size: The number of bytes to be copied.
-
-                [in] dir: The copy direction.
-
-                Usage Examples 1:
-                // before:
-                #pragma operation(memory(input[output_nram], output[output]))
-                for (int i = 0; i < 512; ++i) {
-                    for (int j = 0; j < 512; ++j) {
-                        output[i * 512 + j] = output_nram[i * 512 + j];
-                    }
-                }
-
-                // after:
-                __memcpy(output, output_nram, 512 * 512 * 4, NRAM2GDRAM);
-
-                Usage Examples 2:
-                __nram__ float output_nram[512 * 512];
-                // before:
-                #pragma operation(memory(input[output], output[output_nram]))
-                for (int i = 0; i < 512; ++i) {
-                    for (int j = 0; j < 512; ++j) {
-                        output_nram[i * 512 + j] = output[i * 512 + j];
-                    }
-                }
-
-                // after:
-                __memcpy(output_nram, output, 512 * 512 * 4, GDRAM2NRAM);
-
-                Usage Examples 3:
-                __nram__ half output_nram[512 * 512];
-                // before:
-                #pragma operation(memory(input[output], output[output_nram]))
-                for (int i = 0; i < 512; ++i) {
-                    for (int j = 0; j < 512; ++j) {
-                        output_nram[i * 512 + j] = output[i * 512 + j];
-                    }
-                }
-
-                // after:
-                __memcpy(output_nram, output, 512 * 512 * 2, GDRAM2NRAM);
-
-                 Usage Examples 4:
-                // before:
-                #pragma operation(memory(input[output], output[output_wram]))
-                for (int i = 0; i < 512; ++i) {
-                    for (int j = 0; j < 512; ++j) {
-                        output_wram[i * 512 + j] = output[i * 512 + j];
-                    }
-                }
-
-                // after:
-                __memcpy(output_wram, output, 512 * 512 * 4, GDRAM2WRAM);
-
-                """
-            else:
-                if op in ["tanh", "relu", "exp", "gelu", "sign", "recip", "log", "rsqrt", "sqrt"]:
-                    op = "__bang_active" + op
-                else:
-                    op = "__bang_" + op
-                op_document = retrieve_documentation(op, target)
-            code = tensorization(op, code, op_document)
-    elif target in ["cuda", "hip"]:
+    if target in ["cuda", "hip"]:
         if "matmul" not in op_list:
             return code
     return code
@@ -350,7 +265,6 @@ def double_buffer(code):
 
     PROMPT = PROMPT.replace("{SYSTEM_PROMPT}", SYSTEM_PROMPT)
     PROMPT = PROMPT.replace("{DOUBLE_BUFFER_PROMPT}", DOUBLE_BUFFER_PROMPT)
-    PROMPT = PROMPT.replace("{DOUBLE_BUFFER_DEMO}", DOUBLE_BUFFER_DEMO)
     PROMPT = PROMPT.replace("{code}", code)
     content = invoke_llm(PROMPT)
     code = extract_code(content)
@@ -371,17 +285,9 @@ def post_processing_pipeline(code, target):
     :return: Transformed code after applying the two transformations."""
     code = run_thread_binding(code, target)
 
-    # when target is "mlu" or "DLBOOST", insert tensorization process.
-    if target in ["mlu", "DLBOOST"]:
+    if target in ["DLBOOST"]:
         code = run_code_decoration(code)
         op_pragma = {}
-        if target == "mlu":
-            op_pragma = json.load(
-                open(
-                    "./falcon/documents/operation_bang_C_instruction_map.json",
-                    "r",
-                )
-            )
         code, space_maps = replace_operation_with_intrinsic(code, op_pragma)
         code = run_cache_process(code, space_maps, target)
         code = run_code_decoration(code)
@@ -390,46 +296,4 @@ def post_processing_pipeline(code, target):
 
 
 if __name__ == "__main__":
-    code = """
-     extern "C" __mlu_global__ void add(float *input1, float *input2, float *output)
-    {
-    __nram__ float input1_Nram[256];
-    __nram__ float input2_Nram[256];
-    __nram__ float output_Nram[256];
-    for (int i = 0; i < 3; i++)
-    {
-        for (int j = 0; j < 3; j++)
-        {
-        #pragma operation(memory(input[input1], output[input1_Nram]))
-        for (int k = 0; k < 256; k++)
-        {
-            int index = (((i * 3) * 256) + (j * 256)) + k;
-            input1_Nram[k] = input1[index];
-        }
-
-        #pragma operation(memory(input[input2], output[input2_Nram]))
-        for (int k = 0; k < 256; k++)
-        {
-            int index = (((i * 3) * 256) + (j * 256)) + k;
-            input2_Nram[k] = input2[index];
-        }
-
-        #pragma operation(add(input[input1_Nram, input2_Nram], output[output_Nram]))
-        for (int k = 0; k < 256; k++)
-        {
-            output_Nram[k] = input1_Nram[k] + input2_Nram[k]; // Use both cached versions
-        }
-
-        #pragma operation(memory(input[output_Nram], output[output]))
-        for (int k = 0; k < 256; k++)
-        {
-            int index = (((i * 3) * 256) + (j * 256)) + k;
-            output[index] = output_Nram[k]; // Write cached result to original buffer
-        }
-        }
-    }
-    }
-    """
-    target = "mlu"
-    code = run_tensorization(code, target)
-    print("[INFO]***********code: ", code)
+    pass

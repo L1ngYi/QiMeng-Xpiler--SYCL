@@ -10,7 +10,7 @@ import tiktoken
 from absl import app, flags
 from jax import jit, lax, vmap
 
-from benchmark.perf import perf_cuda, perf_dlboost, perf_hip, perf_mlu
+from benchmark.perf import perf_cuda, perf_dlboost, perf_hip
 from falcon.mcts.action_logit import generate_prior_from_src
 from falcon.mcts.actions import actions as ActionSpace
 from falcon.mcts.invalid_actions import get_invalid_actions
@@ -39,7 +39,7 @@ flags.DEFINE_integer(
 )
 flags.DEFINE_integer("max_depth", 13, "The maximum search depth.")
 flags.DEFINE_string("source", "cpu", "Source platform identifier.")
-flags.DEFINE_string("target", "mlu", "Destination platform identifier.")
+flags.DEFINE_string("target", "cuda", "Destination platform identifier.")
 flags.DEFINE_string(
     "file_name",
     "benchmark/data/cpp_code_test/bmm_4_128_128_128.cpp",
@@ -60,8 +60,6 @@ def objective(file_name, target):
         time_ms = 1000000
         if target == "cuda":
             time_ms = perf_cuda.benchmark(file_name)
-        elif target == "mlu":
-            time_ms = perf_mlu.benchmark(file_name)
         elif target == "cpu":
             time_ms = perf_dlboost.benchmark(file_name)
         elif target == "hip":
@@ -241,7 +239,7 @@ class FalconGo:
         return self.action_len
 
 
-def build_env(file_name, source_platform="mlu", target_platform="cpu"):
+def build_env(file_name, source_platform="cpu", target_platform="cuda"):
     action_len = len(ActionSpace)
     base_name = os.path.basename(file_name)
     op_name = base_name.split("_")[0]

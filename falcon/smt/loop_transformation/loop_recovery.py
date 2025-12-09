@@ -32,7 +32,6 @@ cuda_paravar = [
     "blockIdx.y",
     "blockIdx.z",
 ]
-mlu_paravar = ["coreId", "clusterId"]
 
 
 def update_dim(cuda_code):
@@ -107,11 +106,6 @@ def ast_loop_recovery(code, target="cuda"):
             if builtin_var in code:
                 builtin_map[builtin_var] = ParaVar[builtin_var]
 
-    elif target == "mlu":
-        for builtin_var in mlu_paravar:
-            if builtin_var in code:
-                builtin_map[builtin_var] = ParaVar[builtin_var]
-
     # insert the parallel loop
     ast = parse_code_ast(code)
     visitor = LoopRecoveryVisitor(builtin_map)
@@ -129,11 +123,6 @@ def ast_loop_recovery(code, target="cuda"):
         code = code.replace("blockIdx.y", "blockIdxy")
         code = code.replace("blockIdx.z", "blockIdxz")
         return "__global__ " + code if "__global__ " not in code else code
-    elif target == "mlu":
-        code = code.replace("coreId", "core_id")
-        code = code.replace("clusterId", "cluster_id")
-        code = make_full_func(code, target)
-        return code
 
 
 if __name__ == "__main__":
@@ -145,19 +134,6 @@ if __name__ == "__main__":
     }
     """
     converted_code = ast_loop_recovery(cuda_code, "cuda")
-    print(converted_code)
-
-    bang_code = """
-    void matmul_kernel(float *A, float *B, float *C) {
-        for (int col = 0; col < 128; col++) {
-            C[(clusterId * 4 + coreId) * 128 + col] = 0.0f;
-            for (int i = 0; i < 128; i++) {
-                C[(clusterId * 4 + coreId) * 128 + col] += A[(clusterId * 4 + coreId) * 128 + i] * B[i * 128 + col];
-            }
-        }
-    }
-    """
-    converted_code = ast_loop_recovery(bang_code, "mlu")
     print(converted_code)
 
     cuda_code = """
@@ -183,25 +159,4 @@ if __name__ == "__main__":
     }
     """
     converted_code = ast_loop_recovery(cuda_code, "cuda")
-    print(converted_code)
-
-    bang_code = """
-    extern "C" __mlu_global__ void gemm(float *A, float *B, float *C) {
-        __nram__ float A_nram[8 * 128];
-        __wram__ float B_wram[128 * 128];
-        __nram__ float C_nram[8 * 128];
-        if (clusterId < 4) {
-            if (coreId < 4) {
-            __memcpy(A_nram, A + (clusterId * 4 + coreId) * 8 * 128, 8 * 128 * 4,
-                    GDRAM2NRAM);
-            __memcpy(B_wram, B, 128 * 128 * 4, GDRAM2WRAM);
-
-            __bang_matmul(C_nram, A_nram, B_wram, 8, 128, 128);
-            __memcpy(C + (clusterId * 4 + coreId) * 8 * 128, C_nram, 8 * 128 * 4,
-                    NRAM2GDRAM);
-            }
-        }
-    }
-    """
-    converted_code = ast_loop_recovery(bang_code, "mlu")
     print(converted_code)

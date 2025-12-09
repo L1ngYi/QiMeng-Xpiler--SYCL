@@ -4,18 +4,11 @@ set -euo pipefail
 TRANSLATOR_PY="benchmark/few_shot/code_transfer_gpt4.py"
 BENCH_DIR="benchmark/data"
 
-# 只跑 MLU→CPU 和 CPU→MLU
 DIRECTIONS=(
-	"mlu:cpu"
-	"cpu:mlu"
-	"mlu:hip"
-	"mlu:cuda"
 	"cpu:hip"
 	"cpu:cuda"
-	"cuda:mlu"
 	"cuda:hip"
 	"cuda:cpu"
-	"hip:mlu"
 	"hip:cuda"
 	"hip:cpu"
 )
@@ -23,7 +16,6 @@ DIRECTIONS=(
 # 编译脚本映射
 declare -A COMPILE_SCRIPTS=(
 	["cpu"]="benchmark/evaluation/dlboost_test/compilation.py"
-	["mlu"]="benchmark/evaluation/mlu_test/compilation.py"
 	["cuda"]="benchmark/evaluation/cuda_test/compilation.py"
 	["hip"]="benchmark/evaluation/hip_test/compilation.py"
 )
@@ -31,7 +23,6 @@ declare -A COMPILE_SCRIPTS=(
 # 测试脚本映射
 declare -A TEST_SCRIPTS=(
 	["cpu"]="benchmark/evaluation/dlboost_test/result_test.py"
-	["mlu"]="benchmark/evaluation/mlu_test/result_test.py"
 	["cuda"]="benchmark/evaluation/cuda_test/result_test.py"
 	["hip"]="benchmark/evaluation/hip_test/result_test.py"
 )

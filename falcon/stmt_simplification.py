@@ -331,53 +331,6 @@ if __name__ == "__main__":
     print(code)
 
     c_code = """
-    void sign(float *input0, float *active_sign_147)
-    {
-        for (int clusterId = 0; clusterId < 4; ++clusterId)
-        {
-            for (int coreId = 0; coreId < 4; ++coreId)
-            {
-                float input0_local_nram[25];
-                for (int i0_outer_outer_outer = 0; i0_outer_outer_outer < 3; ++i0_outer_outer_outer)
-                {
-                    if ((((i0_outer_outer_outer * 16) + (((int) clusterId) * 4)) + ((int) coreId)) < 45)
-                    {
-                        int src_offset = ((i0_outer_outer_outer * 400) + (((int) clusterId) * 100)) + (((int) coreId) * 25);
-                        int dst_offset = 0;
-                        for (int i = 0; i < 25; ++i)
-                        {
-                            input0_local_nram[dst_offset + i] = input0[src_offset + i];
-                        }
-                    }
-                    if ((((i0_outer_outer_outer * 16) + (((int) clusterId) * 4)) + ((int) coreId)) < 45)
-                    {
-                        // Detensorizing the __bang_active_sign
-                        for (int i = 0; i < 25; ++i)
-                        {
-                            if (input0_local_nram[i] >= 0)
-                                input0_local_nram[i] = 1.0f;
-                            else
-                                input0_local_nram[i] = -1.0f;
-                        }
-                    }
-                    if ((((i0_outer_outer_outer * 16) + (((int) clusterId) * 4)) + ((int) coreId)) < 45)
-                    {
-                        int src_offset = 0;
-                        int dst_offset = ((i0_outer_outer_outer * 400) + (((int) clusterId) * 100)) + (((int) coreId) * 25);
-                        for (int i = 0; i < 25; ++i)
-                        {
-                            active_sign_147[dst_offset + i] = input0_local_nram[src_offset + i];
-                        }
-                    }
-                }
-            }
-        }
-    }
-    """
-    code = ast_stmt_simplification(c_code)
-    print(code)
-
-    c_code = """
     void add(float *A, float *B, float *T_add)
     {
         for (int k = 0; k < 16; k++)

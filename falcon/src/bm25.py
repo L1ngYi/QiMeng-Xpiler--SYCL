@@ -247,20 +247,4 @@ class BM25(object):
 
 
 if __name__ == "__main__":
-    target_api_name = "__bang_matmul"
-    print(f"Adding custom word to Jieba: {target_api_name}")
-    bm25 = BM25(custom_words=[target_api_name])
-
-    # ------------------
-
-    query_content = target_api_name
-    result = bm25.cal_similarity_rank(query_content)
-
-    print("\n" + "=" * 50)
-    print(f"Query: {query_content}")
-    print(f"Top 3 Results:")
-
-    for doc, score in result:
-        if score > 0:
-            print(f"Score: {score:.4f}, Doc Snippet: {doc[:50]}...")
-            print(doc)
+    pass

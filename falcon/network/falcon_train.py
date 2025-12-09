@@ -22,7 +22,7 @@ from pgx._src.struct import dataclass
 from pgx._src.types import Array
 from pydantic import BaseModel
 
-from benchmark.perf import perf_cuda, perf_dlboost, perf_hip, perf_mlu
+from benchmark.perf import perf_cuda, perf_dlboost, perf_hip
 from falcon.mcts.actions import actions as ActionSpace
 from falcon.mcts.utils import open_file
 from falcon.util import get_target
@@ -48,8 +48,6 @@ def objective(file_name, target):
         time_ms = 1000000
         if target == "cuda":
             time_ms = perf_cuda.benchmark(file_name)
-        elif target == "mlu":
-            time_ms = perf_mlu.benchmark(file_name)
         elif target == "cpu":
             time_ms = perf_dlboost.benchmark(file_name)
         elif target == "hip":

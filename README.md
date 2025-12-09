@@ -1,6 +1,6 @@
 # Tensor Programs Transcompilation
 
-The **cuda_irregular_ops** repository focuses on cross-conversion between programming languages for different deep learning processors. It includes implementations of irregular tensor operators in **CUDA C**, **AVX VNNI**, and **BANG C**. 
+The **cuda_irregular_ops** repository focuses on cross-conversion between programming languages for different deep learning processors. It includes implementations of irregular tensor operators in **CUDA C**, **AVX VNNI**. 
 The overall workflow involves: 
 1. **Preprocessing**: Converting platform-specific code into standard C code. This step removes features tied to particular hardware platforms, allowing for more generic handling. 
 

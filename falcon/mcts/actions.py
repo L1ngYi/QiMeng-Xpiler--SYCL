@@ -109,7 +109,7 @@ def loop_contraction(file_name, code, source_platform, target_platform):
 
 
 def auto_bind(file_name, code, source_platform, target_platform):
-    if target_platform not in ["mlu", "cuda", "hip"]:
+    if target_platform not in ["cuda", "hip"]:
         return code
     try:
         final_code = run_thread_binding(code, target_platform)
@@ -124,12 +124,6 @@ def auto_cache(file_name, code, source_platform, target_platform):
     code = constant_inline(code)
     code = run_code_decoration(code)
     op_pragma = {}
-    if target_platform == "mlu":
-        op_pragma = json.load(
-            open(
-                "./falcon/documents/operation_bang_C_instruction_map.json", "r"
-            )
-        )
     code, space_maps = replace_operation_with_intrinsic(code, op_pragma)
     # If no need to cache, just return origin code
     if space_maps is None:
@@ -155,15 +149,7 @@ def auto_tensorization(file_name, code, source_platform, target_platform):
 
 
 def auto_pipeline(file_name, code, source_platform, target_platform):
-    if target_platform not in ["mlu"]:
-        return code
-    try:
-        final_code = run_double_buffer(code, target_platform)
-        if not unit_test(file_name, final_code)[0]:
-            raise RuntimeError("auto_pipeline error")
-    except Exception:
-        final_code = smt_double_buffer(code)
-    return final_code
+    return code
 
 
 actions = [
@@ -198,9 +184,7 @@ if __name__ == "__main__":
     from falcon.util import get_target
 
     target, file_type = get_target(code)
-    if target == "mlu":
-        new_file = "./tmp/add_4_4_4_64.mlu"
-    elif target == "cuda":
+    if target == "cuda":
         new_file = "./tmp/add_4_4_4_64.cu"
     else:
         new_file = "./tmp/add_4_4_4_64.cpp"

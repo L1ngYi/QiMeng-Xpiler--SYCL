@@ -4,18 +4,11 @@ set -euo pipefail
 TRANSLATOR_PY="falcon/mcts/transcompile.py"
 BENCH_DIR="benchmark/data"
 
-# 只跑 MLU→CPU 和 CPU→MLU
 DIRECTIONS=(
-	"mlu:cpu"
-	"cpu:mlu"
-	"mlu:hip"
-	"mlu:cuda"
 	"cpu:hip"
 	"cpu:cuda"
-	"cuda:mlu"
 	"cuda:hip"
 	"cuda:cpu"
-	"hip:mlu"
 	"hip:cuda"
 	"hip:cpu"
 )
