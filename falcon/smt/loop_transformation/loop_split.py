@@ -7,80 +7,82 @@ from falcon.util import parse_code_ast
 
 class SplitForLoopVisitor(c_ast.NodeVisitor):
     def __init__(self):
-        self.factor = (
-            None  # Used to store the split factor extracted from the pragma
-        )
+        self.factor = None
         self.axis_name = None
         self.org_extent = None
 
     def visit_Compound(self, node):
-        """Use pragma loop_split and obtain the split factor to apply to
-        subsequent for loops."""
-        blocks = node.block_items
-        if not blocks:
-            return
-
+        """Scans block items for #pragma loop_split and applies transformation
+        to the subsequent for-loop."""
         new_block_items = []
         skip_next = False
 
-        # Iterate through `block_items`.
-        for index, subnode in enumerate(blocks):
-            if skip_next:
-                skip_next = False
-                continue
+        if node.block_items:
+            for index, subnode in enumerate(node.block_items):
+                if skip_next:
+                    skip_next = False
+                    continue
 
-            # Check if it is `#pragma loop_split(<factor>)`.
-            if (
-                isinstance(subnode, c_ast.Pragma)
-                and "loop_split" in subnode.string
-            ):
-                # Extract factor values
-                pragma_content = subnode.string.strip()
-                self.factor = int(
-                    re.search(
-                        r"\\((?:factor=)?(\\d+)\\)", pragma_content
-                    ).group(1)
-                )
-
-                # Check if the next node is a `for` loop.
-                if index + 1 < len(blocks) and isinstance(
-                    blocks[index + 1], c_ast.For
+                # Check for #pragma loop_split
+                if (
+                    isinstance(subnode, c_ast.Pragma)
+                    and "loop_split" in subnode.string
                 ):
-                    self.axis_name = blocks[index + 1].init.decls[0].name
-                    # Application of cyclic decomposition
-                    split_for_loop = self.split_for_loop(blocks[index + 1])
-                    new_block_items.append(split_for_loop)
+                    # Extract factor using regex (handles "loop_split(2)" or
+                    # "loop_split(factor=2)")
+                    match = re.search(
+                        r"\((\d+)\)", subnode.string
+                    ) or re.search(r"factor=(\d+)", subnode.string)
 
-                    # Skip the `for` loop of the next node.
-                    skip_next = True
-                else:
-                    # This is not a case for a `for` loop; add the original
-                    # node.
-                    new_block_items.append(subnode)
-            else:
-                # If it is neither `#pragma loop_split` nor `for`, directly add
-                # the node.
+                    if match:
+                        self.factor = int(match.group(1))
+
+                        # Check if next node is a For loop
+                        if index + 1 < len(node.block_items):
+                            next_node = node.block_items[index + 1]
+                            if isinstance(next_node, c_ast.For):
+                                # Extract loop variable name (assuming: int i =
+                                # 0;)
+                                self.axis_name = next_node.init.decls[0].name
+
+                                # Perform the split
+                                split_loop = self.split_for_loop(next_node)
+                                new_block_items.append(split_loop)
+
+                                # Skip the original loop in the next iteration
+                                skip_next = True
+                                continue
+
+                # If no split happened, keep the node
                 new_block_items.append(subnode)
 
-        # Update `block_items`.
-        node.block_items = new_block_items
+            node.block_items = new_block_items
+
+        # Continue visiting children
         self.generic_visit(node)
 
     def split_for_loop(self, node):
-        """Split for loop."""
-        # Extract the maximum value of the original cycle (cycle range).
+        """Transforms a single loop into a tiled nested loop structure."""
+        # 1. Calculate Ranges
+        # Note: robust code should handle cases where extent isn't perfectly
+        # divisible
         self.org_extent = int(node.cond.right.value)
-        outer_extent = self.factor
+        inner_range = self.org_extent // self.factor
 
-        # Create an internal loop.
-        inner_init = c_ast.Decl(
-            name=self.axis_name + "_in",
+        # Define variable names
+        i_in = f"{self.axis_name}_in"
+        i_out = f"{self.axis_name}_out"
+
+        # 2. Create Inner Loop
+        # Init: int i_in = 0;
+        init_in = c_ast.Decl(
+            name=i_in,
             quals=[],
             align=[],
             storage=[],
             funcspec=[],
             type=c_ast.TypeDecl(
-                declname=self.axis_name + "_in",
+                declname=i_in,
                 quals=[],
                 align=None,
                 type=c_ast.IdentifierType(["int"]),
@@ -88,35 +90,61 @@ class SplitForLoopVisitor(c_ast.NodeVisitor):
             init=c_ast.Constant("int", "0"),
             bitsize=None,
         )
-        inner_cond = c_ast.BinaryOp(
-            node.cond.op,
-            c_ast.ID(self.axis_name + "_in"),
-            c_ast.Constant("int", str(self.org_extent // self.factor)),
+        # Cond: i_in < inner_range;
+        cond_in = c_ast.BinaryOp(
+            "<", c_ast.ID(i_in), c_ast.Constant("int", str(inner_range))
         )
-        inner_next = c_ast.UnaryOp(
-            node.next.op, c_ast.ID(self.axis_name + "_in")
+        # Next: i_in++
+        next_in = c_ast.UnaryOp("p++", c_ast.ID(i_in))
+
+        # 3. Create the Index Reconstruction (The Fix)
+        # We inject: int i = (i_out * inner_range) + i_in;
+        # This replaces the need for the visit_ID string hack.
+        calc_expr = c_ast.BinaryOp(
+            "+",
+            c_ast.BinaryOp(
+                "*", c_ast.ID(i_out), c_ast.Constant("int", str(inner_range))
+            ),
+            c_ast.ID(i_in),
         )
 
-        # The `for` structure of the inner loop
-        inner_for = c_ast.For(
-            init=inner_init,
-            cond=inner_cond,
-            next=inner_next,
-            stmt=node.stmt,
-        )
-
-        # Wrap the inner loop in a `Compound` block.
-        inner_compound = c_ast.Compound(block_items=[inner_for])
-
-        # Outer loop
-        outer_init = c_ast.Decl(
-            name=self.axis_name + "_out",
+        decl_original_var = c_ast.Decl(
+            name=self.axis_name,
             quals=[],
             align=[],
             storage=[],
             funcspec=[],
             type=c_ast.TypeDecl(
-                declname=self.axis_name + "_out",
+                declname=self.axis_name,
+                quals=[],
+                align=None,
+                type=c_ast.IdentifierType(["int"]),
+            ),
+            init=calc_expr,
+            bitsize=None,
+        )
+
+        # Construct Inner Loop Body: [Declaration of i] + [Original Body]
+        inner_body_items = [decl_original_var]
+
+        if isinstance(node.stmt, c_ast.Compound):
+            inner_body_items.extend(node.stmt.block_items)
+        else:
+            inner_body_items.append(node.stmt)
+
+        inner_compound = c_ast.Compound(block_items=inner_body_items)
+        inner_for = c_ast.For(init_in, cond_in, next_in, inner_compound)
+
+        # 4. Create Outer Loop
+        # Init: int i_out = 0;
+        init_out = c_ast.Decl(
+            name=i_out,
+            quals=[],
+            align=[],
+            storage=[],
+            funcspec=[],
+            type=c_ast.TypeDecl(
+                declname=i_out,
                 quals=[],
                 align=None,
                 type=c_ast.IdentifierType(["int"]),
@@ -124,49 +152,26 @@ class SplitForLoopVisitor(c_ast.NodeVisitor):
             init=c_ast.Constant("int", "0"),
             bitsize=None,
         )
-        outer_cond = c_ast.BinaryOp(
-            node.cond.op,
-            c_ast.ID(self.axis_name + "_out"),
-            c_ast.Constant("int", str(outer_extent)),
+        # Cond: i_out < factor;
+        cond_out = c_ast.BinaryOp(
+            "<", c_ast.ID(i_out), c_ast.Constant("int", str(self.factor))
         )
-        outer_next = c_ast.UnaryOp(
-            node.next.op, c_ast.ID(self.axis_name + "_out")
-        )
+        # Next: i_out++
+        next_out = c_ast.UnaryOp("p++", c_ast.ID(i_out))
 
-        # The `for` structure of the outer loop
-        outer_for = c_ast.For(
-            init=outer_init,
-            cond=outer_cond,
-            next=outer_next,
-            stmt=inner_compound,
-        )
+        # Wrap inner loop
+        outer_compound = c_ast.Compound(block_items=[inner_for])
+        outer_for = c_ast.For(init_out, cond_out, next_out, outer_compound)
 
-        # Revise the reference to `axis_name` in the inner loop.
-        self.generic_visit(inner_for)
         return outer_for
-
-    def visit_ID(self, node):
-        if node.name == self.axis_name:
-            node.name = (
-                self.axis_name
-                + "_out"
-                + " * "
-                + str(self.org_extent // self.factor)
-                + " + "
-                + self.axis_name
-                + "_in"
-            )
-        self.generic_visit(node)
 
 
 def ast_loop_split(code):
     ast = parse_code_ast(code)
-    generator = c_generator.CGenerator()
-    # Custom visitor instance
     visitor = SplitForLoopVisitor()
-    # Visit the AST to split 'for' loops with loop count 10 into 2 loops with
-    # counts 2 and 5
     visitor.visit(ast)
+
+    generator = c_generator.CGenerator()
     return generator.visit(ast)
 
 
@@ -174,20 +179,20 @@ if __name__ == "__main__":
     code = """
     int factorial(int result) {
         # pragma loop_split(2)
-        for (int i=0; i < 10; i + +) {
+        for (int i=0; i < 10; i++) {
             result += i;
         }
         return result;
     }
     """
-    final_node = ast_loop_split(code)
-    print(final_node)
+    final_code = ast_loop_split(code)
+    print(final_code)
 
     code = """
     void add_kernel(float * A, float * B, float * T_add) {
-        for (int i=0; i < 256; i + +) {
+        for (int i=0; i < 256; i++) {
             # pragma loop_split(4)
-            for (int j=0; j < 1024; j + +) {
+            for (int j=0; j < 1024; j++) {
                 T_add[((i * 1024) + j)] = (A[((i * 1024) + j)] +
                        B[((i * 1024) + j)]);
             }
