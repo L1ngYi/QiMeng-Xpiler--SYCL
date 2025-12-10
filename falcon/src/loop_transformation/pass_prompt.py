@@ -150,10 +150,11 @@ for (int i = 0; i < 60; i++) {
 
 // after:
 ```cpp
-for (int k = 0; k < 4; k++) {
-    for (int j = 0; j < 15; j++) {
-        if ((k * 15 + j) < 60) {
-            A[k * 15 + j] = B[k * 15 + j] * C[k * 15 + j];
+
+for (int i_outer = 0; i_outer < 4; i_outer++) {
+    for (int i_inner = 0; i_inner < 15; i_inner++) {
+        if ((i_outer * 15 + i_inner) < 60) {
+            A[i_outer * 15 + i_inner] = B[i_outer * 15 + i_inner] * C[i_outer * 15 + i_inner];
         }
     }
 }

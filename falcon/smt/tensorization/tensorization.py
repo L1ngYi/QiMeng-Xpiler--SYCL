@@ -216,27 +216,27 @@ if __name__ == "__main__":
     __nram__ float C_nram[64];
 
     # pragma operation(memory(input[B], output[B_wram]))
-    for (int col=0; col < 64; col + +) {
-        for (int i=0; i < 512; i + +) {
+    for (int col=0; col < 64; col++) {
+        for (int i=0; i < 512; i++) {
             B_wram[i * 64 + col] = B[i * 64 + col];
         }
     }
 
     # pragma operation(memory(input[A], output[A_wram]))
-    for (int i=0; i < 512; i + +) {
+    for (int i=0; i < 512; i++) {
         A_nram[i] = A[(clusterId * 4 + coreId) * 512 + i];
     }
 
     # pragma operation(matmul(input[A_nram, B_wram], output[C_nram]))
-    for (int col=0; col < 64; col + +) {
+    for (int col=0; col < 64; col++) {
         C_nram[(clusterId * 4 + coreId) * 64 + col] = 0.0f;
-        for (int i=0; i < 512; i + +) {
+        for (int i=0; i < 512; i++) {
             C_nram[col] += A_nram[i] * B_wram[i * 64 + col];
         }
     }
 
     # pragma operation(memory(input[C_nram], output[C]))
-    for (int col=0; col < 64; col + +) {
+    for (int col=0; col < 64; col++) {
         C[(clusterId * 4 + coreId) * 64 + col] = C_nram[col];
     }
     }
