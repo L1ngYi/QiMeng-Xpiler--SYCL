@@ -170,7 +170,43 @@ def run_cuda_compilation(so_name, file_name):
         return True, output
     except subprocess.CalledProcessError as e:
         return False, e.output
+    
 
+def run_sycl_compilation(so_name, file_name):
+    """
+    使用 icpx (Intel LLVM) 或 dpcpp 编译 SYCL 代码为共享库。
+    """
+    # 检查环境变量或默认使用 icpx
+    compiler = "icpx" 
+    
+    cmd = [
+        compiler,
+        "-fsycl",           # 启用 SYCL
+        "-fPIC",            # 生成位置无关代码 (用于 .so)
+        "-shared",          # 生成动态库
+        "-O3",              # 优化级别
+        file_name,
+        "-o",
+        so_name,
+    ]
+    
+    try:
+        # icpx 有时会输出很多无关的 remark，可以加上 -Wno-xxx 屏蔽
+        output = subprocess.run(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            encoding="utf-8",
+            check=True,
+            text=True,
+            timeout=30, # 编译时间给稍微长一点
+        )
+        return True, output
+    except subprocess.CalledProcessError as e:
+        return False, e.output
+    except subprocess.TimeoutExpired:
+        return False, "Compilation timed out"
+ 
 
 def run_hip_compilation(so_name, file_name):
     try:
@@ -195,6 +231,7 @@ def run_hip_compilation(so_name, file_name):
     except subprocess.CalledProcessError as e:
         return False, e.output
 
+   
 
 def run_test(file_name, test_file):
     try:

@@ -4,3 +4,5 @@ benchmark/data
 tmp/
 tmps/
 cpu_cuda/
+.DS_Store
+__pycache__/
