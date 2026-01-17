@@ -7,6 +7,7 @@ python benchmark/evaluation/cpu_test/compilation.py benchmark/data/cpp_code_test
 echo "==============CPP Computation Test==============="
 python benchmark/evaluation/cpu_test/result_test.py benchmark/data/cpp_code_test benchmark/evaluation/cpu_test/
 # # Check for NVIDIA GPU presence
+#寒武纪
 if cnmon >/dev/null 2>&1; then
 
 	echo "==============DL Boost Compilation Test==============="

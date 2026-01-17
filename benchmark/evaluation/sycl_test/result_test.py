@@ -7,13 +7,12 @@ from concurrent.futures import ProcessPoolExecutor, as_completed
 
 from tqdm import tqdm
 
-# 从 benchmark.utils 导入通用的测试运行函数，用于启动子进程执行测试脚本
+# 从 benchmark.utils 导入通用的测试运行函数
 from benchmark.utils import run_test
 
-# mapping from operator name prefix to its test script
 # 算子前缀与测试脚本的映射表
-# 键(Key)是生成文件名的前缀（如 gemm_16_16_16.cu 中的 "gemm"）
-# 值(Value)是对应的 Python 测试驱动脚本文件名
+# 这里的映射关系与 CUDA 版本保持一致，因为测试脚本（如 test_gemm.py）
+# 会根据传入的文件类型自动处理 SYCL 逻辑（前提是您已经按照之前的步骤实现了 SYCL 版的 test_xxx.py）
 TEST_FILE_MAPPING = {
     "deformable": "test_deformable_attention.py",
     "layernorm": "test_layer_norm.py",
@@ -40,19 +39,18 @@ TEST_FILE_MAPPING = {
 
 
 def process_file(file_path, test_dir):
-    """Run the corresponding test for a single .cuda or .cpp file.
+    """Run the corresponding test for a single .cpp (SYCL) file.
 
     Returns (file_path, output) where output is the subprocess result or error
     string.
     """
-    # 获取文件名（不含路径），例如 "gemm_128_128_128.cu"
+    # 获取文件名（不含路径），例如 "gemm_128_128_128.cpp"
     base_name = os.path.basename(file_path)
     # 提取算子名称，例如 "gemm"
     name = base_name.split("_")[0]
     # 根据算子名称查找对应的测试脚本文件名
     script_name = TEST_FILE_MAPPING.get(name)
     
-    # 如果找不到对应的映射关系，返回警告信息
     if not script_name:
         return file_path, f"[WARN] No test mapping for prefix '{name}'"
 
@@ -63,7 +61,8 @@ def process_file(file_path, test_dir):
         return file_path, f"[ERROR] Test script not found: {test_file}"
 
     # 调用 run_test 执行测试
-    # 这通常会通过 subprocess 调用 `python test_gemm.py --file ...`
+    # 这里的 file_path 是生成的 SYCL .cpp 文件
+    # test_file 是对应的 python 驱动脚本 (benchmark/evaluation/sycl_test/test_xxx.py)
     success, output = run_test(file_path, test_file)
     return file_path, output
 
@@ -71,28 +70,27 @@ def process_file(file_path, test_dir):
 def main():
     # 解析命令行参数
     parser = argparse.ArgumentParser(
-        description="Run functional tests on translated cuda programs"
+        description="Run functional tests on translated SYCL programs"
     )
-    # 参数 1: 包含待测试 .cu 文件的源目录
+    # 参数 1: 包含待测试 SYCL 文件的源目录 (通常是 generated/sycl/ 或类似的目录)
     parser.add_argument(
         "source_dir",
-        help="Directory containing translated .cuda files (e.g. translated/nvidia_to_cuda/)",
+        help="Directory containing translated .cpp files (SYCL source)",
     )
-    # 参数 2: 包含测试脚本（如 test_gemm.py）的目录
+    # 参数 2: 包含测试脚本的目录 (e.g. benchmark/evaluation/sycl_test/)
     parser.add_argument(
         "test_dir",
-        help="Directory containing test scripts (e.g. benchmark/evaluation/cuda_test/)",
+        help="Directory containing test scripts",
     )
     args = parser.parse_args()
 
-    # 匹配源目录下所有的 .cu 文件
-    pattern = os.path.join(args.source_dir, "*.cu")
+    # 【关键修改】匹配源目录下所有的 .cpp 文件  
+    pattern = os.path.join(args.source_dir, "*.cpp")
     files = glob.glob(pattern)
     
-    # 如果没找到文件，打印警告并退出
     if not files:
         print(
-            f"[WARN] no .cu files found in {args.source_dir}",
+            f"[WARN] no .cpp files found in {args.source_dir}",
             file=sys.stderr,
         )
         sys.exit(0)
@@ -100,37 +98,45 @@ def main():
     total = len(files)
     success_count = 0
 
-    # 使用进程池并行执行测试任务，提高测试效率
+    print(f"[INFO] Starting SYCL functionality tests on {total} files...")
+
+    # 使用进程池并行执行测试任务
     with ProcessPoolExecutor() as executor:
-        # 提交所有文件的测试任务
         future_to_file = {
             executor.submit(process_file, fp, args.test_dir): fp
             for fp in files
         }
 
-        # 使用 tqdm 显示进度条，并随着任务完成逐个处理结果
+        # 使用 tqdm 显示进度条
         for future in tqdm(as_completed(future_to_file), total=total):
             future_to_file[future]
             file_path, output = future.result()
             
-            # 检查输出结果中是否包含成功的标志字符串
-            # "Verification successful!" 是 test_gemm.py 等脚本在 np.testing.assert_allclose 通过后打印的信息
+            # 检查输出结果
+            # 注意：benchmark.utils.run_test 返回的 output 如果是 subprocess.CompletedProcess 对象
+            # 则包含 stdout 属性。如果是错误字符串（如 "timeout"），则没有。
+            # 我们的测试脚本 (test_gemm.py 等) 需要在成功时打印 "Verification successful!"
             if (
                 hasattr(output, "stdout")
                 and "Verification successful!" in output.stdout
             ):
                 success_count += 1
             else:
-                # print failures or warnings
-                # 如果测试失败，打印文件名和详细的错误输出（便于调试）
-                print(f"--- {os.path.basename(file_path)} ---")
-                print(output)
+                # 打印失败文件的信息以便调试
+                print(f"--- FAILED: {os.path.basename(file_path)} ---")
+                if hasattr(output, "stdout"):
+                     # 打印标准输出（可能包含 Python 的 Traceback 或 Assert Error）
+                     print(output.stdout)
+                else:
+                     # 打印错误字符串（如 timeout 或编译错误）
+                     print(output)
 
-    # 打印最终的统计结果
+    # 打印最终统计
+    print("-" * 30)
     print(f"Successful tests: {success_count}")
     print(f"Total files: {total}")
     rate = success_count / total if total else 0.0
-    print(f"[INFO] cuda test success rate: {rate:.2%}")
+    print(f"[INFO] SYCL test success rate: {rate:.2%}")
 
 
 if __name__ == "__main__":

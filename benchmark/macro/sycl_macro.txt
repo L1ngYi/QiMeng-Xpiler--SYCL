@@ -1,0 +1,32 @@
+#include <stdio.h>
+#include <math.h>
+#include <float.h>
+#include <stdlib.h>
+
+// C++ 标准库，SYCL 经常用到
+#include <iostream>
+#include <vector>
+#include <cmath>
+#include <algorithm>
+#include <limits>
+
+// SYCL 核心头文件 (对应 cuda_runtime.h 和 cuda.h)
+#include <sycl/sycl.hpp>
+
+// SYCL 扩展：半精度浮点支持 (对应 cuda_fp16.h)
+// 大多数现代 SYCL 实现已内置 sycl::half，但引用扩展头文件更保险
+#if __has_include(<sycl/ext/oneapi/bfloat16.hpp>)
+#include <sycl/ext/oneapi/bfloat16.hpp>
+#endif
+
+// SYCL 扩展：矩阵硬件加速 (对应 mma.h)
+// 这是 Intel oneAPI 的 Joint Matrix 扩展，用于 AMX/XMX 加速
+#if __has_include(<sycl/ext/oneapi/matrix/matrix.hpp>)
+#include <sycl/ext/oneapi/matrix/matrix.hpp>
+#endif
+
+// 打开命名空间 (对应 using namespace nvcuda)
+using namespace sycl;
+
+// 如果生成的代码使用了 matrix 扩展，可能还需要这个命名空间
+// using namespace sycl::ext::oneapi::experimental::matrix;
