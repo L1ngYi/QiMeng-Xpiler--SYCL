@@ -3,193 +3,158 @@ from string import Template
 
 def create_sycl_func(file_name, op_type="ewise"):
     """
-    读取生成的 SYCL Kernel 代码，并用 SYCL Runtime (Queue, USM) 包裹它，
-    生成一个完整的、可被 Python ctypes 调用的 C++ 文件。
+    读取 SYCL 源代码，生成包含 Host 端调用的完整 C++ 文件。
     """
     with open(file_name, "r") as f:
         original_function = f.read()
 
-    # 1. 解析函数签名 (这一步是为了获取参数列表，以便生成 Host 调用接口)
-    # 假设生成的 Kernel 签名是 void kernel_name(arg1, arg2, ..., item)
-    # 注意：我们的 Loop Recovery 生成的代码可能没有 item 参数，或者有。
-    # 这里我们假设生成的代码是一个普通的 C++ 函数，接受指针参数。
-    
-    # 正则匹配：匹配返回 void 的函数，获取函数名和参数列表
-    # 忽略 static, inline 等前修饰符
-    # 例子: void gemm(int8_t* A, int8_t* B, ...)
-    function_signature_pattern = r"void\s+(\w+)\s*\(([^)]*)\)"
-    match = re.search(function_signature_pattern, original_function)
-    
+    # 1. 解析函数签名
+    # 匹配类似: void gemm(half *A, ..., queue &q)
+    # 我们假设函数返回 void，且最后一个参数可能是 queue &q (我们会在生成调用时处理)
+    function_signature_pattern = r"void\s+(\w+)\(([^)]*)\)"
+    match = re.search(function_signature_pattern, original_function, re.DOTALL)
     if not match:
-        # 如果找不到，可能是因为代码被 extern "C" 包裹了，或者有其他修饰符
-        # 尝试更宽松的匹配
-        function_signature_pattern = r"\w+\s+(\w+)\s*\(([^)]*)\)"
-        match = re.search(function_signature_pattern, original_function)
-        if not match:
-             raise ValueError(f"Could not find kernel signature in {file_name}")
+        raise ValueError("Could not find SYCL function signature.")
 
     kernel_name = match.group(1)
     param_list_str = match.group(2)
 
-    # 清洗参数列表
-    params = [param.strip() for param in param_list_str.split(",")]
-    # 过滤掉可能的 item 参数 (如果 MCTS 步骤中已经注入了 item)
-    params = [p for p in params if "sycl::id" not in p and "sycl::nd_item" not in p and "sycl::item" not in p]
+    # 2. 清洗参数
+    raw_params = [param.strip() for param in param_list_str.split(",")]
     
-    # 提取参数类型和名称
-    # e.g., ["int8_t* A", "float* C"]
-    # param_names -> ["A", "C"]
-    # param_types -> ["int8_t*", "float*"]
+    # 分离出真正的数据参数（排除最后的 queue &q）
+    data_params = []
+    for p in raw_params:
+        if "queue" in p:
+            continue
+        data_params.append(p)
+        
+    # 提取参数名和类型
+    # data_params 例子: ["half *A", "half *B", "float *C", "int m", ...]
     param_names = []
-    param_types = []
-    for p in params:
-        parts = p.rsplit(" ", 1) # 从右边分，防止类型里有空格 (unsigned int)
-        if len(parts) == 2:
-            param_types.append(parts[0].strip())
-            param_names.append(parts[1].replace("*", "").strip())
+    pointer_params = [] # 需要分配内存的指针参数
+    scalar_params = []  # 标量参数 (int m 等)
     
-    # 2. 生成内存管理代码 (USM Malloc & Memcpy)
-    device_allocs = []
-    memcpys_h2d = [] # Host to Device
-    memcpys_d2h = [] # Device to Host
-    frees = []
+    for p in data_params:
+        # 简单提取变量名 (取最后一个空格后的部分，去掉 * 和 &)
+        parts = p.split()
+        var_name = parts[-1].replace("*", "").replace("&", "").strip()
+        dtype = " ".join(parts[:-1]) # 类型部分
+        
+        param_names.append(var_name)
+        
+        if "*" in p:
+            pointer_params.append({"name": var_name, "dtype": dtype, "full": p})
+        else:
+            scalar_params.append(var_name)
+
+    # 3. 生成内存管理代码
+    device_memory_alloc = [] 
+    memcpy_htod = []        
+    device_vars = []        # 调用 kernel 时传入的参数列表
     
-    # 根据 op_type 确定数据大小变量名
+    # 构造 kernel 调用时的参数列表
+    # 指针参数变成 name_sycl，标量参数保持原名
+    for p in data_params:
+        var_name = p.split()[-1].replace("*", "").replace("&", "").strip()
+        if "*" in p:
+            device_vars.append(f"{var_name}_sycl")
+        else:
+            device_vars.append(var_name)
+    
+    # 既然你的 kernel 定义里有 queue &q，我们调用时必须把它加进去
+    device_vars.append("q")
+
+    # 根据 op_type 生成 Size 逻辑 (复用你 CUDA 模板的逻辑)
     size_vars = []
-    if op_type == "ewise":
-        size_vars = ["size"]
-    elif op_type == "matmul":
+    if op_type == "matmul":
         size_vars = ["size1", "size2", "size3"] # M*K, K*N, M*N
-    elif op_type in ["pool", "conv"]: # 简化处理，假设也是 size1, size2
-        size_vars = [f"size{i+1}" for i in range(len(params))]
-
-    # 生成逻辑
-    for i, (p_name, p_type) in enumerate(zip(param_names, param_types)):
-        # 移除 const 修饰符以便 malloc
-        base_type = p_type.replace("const ", "").replace("*", "").strip()
-        d_name = f"d_{p_name}"
         
-        # 确定这个参数的大小变量
-        # 简单的启发式：如果是输出(最后一个)，通常对应最后一个 size
-        # 这里需要根据 op_type 严格对应，下面是 matmul 的逻辑：
-        # A(0)->size1, B(1)->size2, C(2)->size3
-        current_size = size_vars[0]
-        if op_type == "matmul":
-            if i < len(size_vars):
-                current_size = size_vars[i]
-            else:
-                current_size = size_vars[-1] # fallback
-        elif op_type == "ewise":
-             current_size = "size"
+        # 分配内存 & Host->Device 拷贝
+        for i, item in enumerate(pointer_params):
+            name = item["name"]
+            dtype = item["dtype"] # e.g. half
+            
+            # 声明设备指针
+            device_memory_alloc.append(f"{dtype} *{name}_sycl;")
+            # Malloc Device
+            device_memory_alloc.append(
+                f"{name}_sycl = sycl::malloc_device<{dtype}>({size_vars[i]}, q);"
+            )
+            
+            # Memcpy H->D (除了最后一个输出 C)
+            if i < len(pointer_params) - 1:
+                memcpy_htod.append(
+                    f"q.memcpy({name}_sycl, {name}, {size_vars[i]} * sizeof({dtype}));"
+                )
 
-        # 1. Malloc Device
-        device_allocs.append(f"{base_type}* {d_name} = sycl::malloc_device<{base_type}>({current_size}, q);")
-        
-        # 2. Memcpy H2D (除了最后一个参数通常是输出)
-        if i < len(params) - 1:
-            memcpys_h2d.append(f"q.memcpy({d_name}, {p_name}, {current_size} * sizeof({base_type}));")
-        
-        # 3. Memcpy D2H (只针对最后一个参数)
-        if i == len(params) - 1:
-            memcpys_d2h.append(f"q.memcpy({p_name}, {d_name}, {current_size} * sizeof({base_type})).wait();")
-
-        # 4. Free
-        frees.append(f"sycl::free({d_name}, q);")
-
-    # 3. 准备参数列表供 Kernel 调用
-    # Kernel 此时接收的是 Device 指针
-    kernel_call_args = ", ".join([f"d_{name}" for name in param_names])
+        # Memcpy D->H (只拷贝最后一个参数 C)
+        last_item = pointer_params[-1]
+        memcpy_dtoh = f"q.memcpy({last_item['name']}, {last_item['name']}_sycl, size3 * sizeof({last_item['dtype']}));"
     
-    # 额外的 size 参数列表 (int size1, int size2...)
-    size_args_def = ", ".join([f"int {s}" for s in size_vars])
+    else:
+        # 这里你可以补充 ewise 等其他逻辑，结构同上
+        raise NotImplementedError("Currently only matmul is supported in this SYCL template.")
 
-    # 4. 组装模板
-    # 注意：这里我们使用 intel/llvm 的扩展或者标准 sycl
-    sycl_template = Template("""
+    # 4. 构造模板
+    # 生成 extern "C" 的参数列表：原始指针参数 + size 参数
+    # 例如: half *A, half *B, float *C, int m, int k, int n, int size1, int size2, int size3
+    extern_c_params = ", ".join(data_params) + ", " + ", ".join(["int " + s for s in size_vars])
+
+    host_func_template = Template(
+"""
 #include <sycl/sycl.hpp>
 #include <iostream>
 #include <vector>
-#include <cmath>
-#include <algorithm>
-// 包含必要的头文件以支持 half/bfloat16 (如果有)
-// #include <sycl/ext/oneapi/bfloat16.hpp>
 
 using namespace sycl;
 
-// 原始 Kernel 代码插入点
-// 我们需要把原始代码里的 extern "C" 去掉，防止冲突，因为我们会在外面再包一层
-${original_function_clean}
+// Original Kernel implementation (User provided)
+${original_function}
 
-extern "C" {
+extern "C" void ${kernel_name}_kernel(${extern_c_params}) {
+    try {
+        // 1. Create Queue
+        queue q(default_selector_v);
 
-    // Host 调用的入口函数
-    void ${kernel_name}_kernel(${host_args}, ${size_args_def}) {
-        try {
-            // 创建 Queue (默认选择器会优先选 GPU)
-            queue q(default_selector_v);
-            
-            // 1. 设备内存分配
-            ${allocs}
-            
-            // 2. 数据拷贝 Host -> Device
-            ${memcpy_h2d}
-            q.wait();
+        // 2. Device Allocation
+        ${alloc_code}
 
-            // 3. 启动 Kernel
-            // 如果原始 Kernel 是一个接收指针的 C++ 函数，我们直接调用它
-            // 如果原始 Kernel 已经被 loop recovery 变成了串行逻辑，
-            // 我们这里其实是在 Host 端调用了一个 "Device Pointer" 的函数。
-            // 
-            // 【重要】: 这里有一个巨大的假设：
-            // 你的 'original_function' 必须包含 parallel_for 逻辑 (即它自己提交任务到 queue)
-            // 或者，如果 'original_function' 只是纯计算逻辑 (Loop Recovery 产物)，
-            // 那么我们必须在这里构造 parallel_for。
-            // 
-            // 鉴于 QiMeng-Xpiler 的架构，Loop Recovery 后的代码通常是纯 C++ 循环。
-            // 如果是 Tensorization 后的代码，它可能包含了特定的 Intrinsic。
-            // 
-            // 为了兼容性，如果 Kernel 签名里没有 queue 参数，我们假设它是一个
-            // 自包含的函数 (Self-contained) 或者我们在这里不需要 queue (如果是纯 CPU 模拟)。
-            // 但如果这是 SYCL 测试，代码里应该已经有了 q.submit(...)
-            // 
-            // 既然我们要测的是生成的 SYCL 代码，我们假设生成的代码接受 Queue 或者
-            // 是一个接受指针的函数，内部自己处理。
-            // 但根据之前的讨论，生成的代码可能只是裸的计算函数。
-            // 
-            // 为了让这个模板通用，我们假设生成的 kernel_name 函数接收的是 device 指针。
-            ${kernel_name}(${kernel_call_args});
-            
-            q.wait();
+        // 3. Memcpy Host -> Device
+        ${memcpy_htod_code}
+        q.wait();
 
-            // 4. 数据拷贝 Device -> Host
-            ${memcpy_d2h}
+        // 4. Call Kernel
+        // We pass the device pointers and the queue
+        ${kernel_name}(${called_args});
+        q.wait();
 
-            // 5. 释放内存
-            ${frees}
+        // 5. Memcpy Device -> Host
+        ${memcpy_dtoh_code}
+        q.wait();
 
-        } catch (sycl::exception const& e) {
-            std::cerr << "SYCL Exception: " << e.what() << std::endl;
-            exit(1);
-        }
+        // 6. Free
+        ${free_code}
+
+    } catch (sycl::exception const &e) {
+        std::cerr << "[SYCL Wrapper Error] " << e.what() << std::endl;
     }
 }
-""")
-    
-    # 清理原始代码中的 extern "C" 以避免嵌套错误
-    original_function_clean = original_function.replace('extern "C"', "")
-
-    new_code = sycl_template.substitute(
-        original_function_clean=original_function_clean,
-        kernel_name=kernel_name,
-        host_args=", ".join([f"{t} {n}" for t, n in zip(param_types, param_names)]),
-        size_args_def=size_args_def,
-        allocs="\n            ".join(device_allocs),
-        memcpy_h2d="\n            ".join(memcpys_h2d),
-        kernel_call_args=kernel_call_args,
-        memcpy_d2h="\n            ".join(memcpys_d2h),
-        frees="\n            ".join(frees)
+"""
     )
 
+    new_code = host_func_template.substitute(
+        original_function=original_function,
+        kernel_name=kernel_name,
+        extern_c_params=extern_c_params,
+        alloc_code="\n        ".join(device_memory_alloc),
+        memcpy_htod_code="\n        ".join(memcpy_htod),
+        called_args=", ".join(device_vars),
+        memcpy_dtoh_code=memcpy_dtoh,
+        free_code="\n        ".join([f"sycl::free({p['name']}_sycl, q);" for p in pointer_params])
+    )
+
+    # 写入 _wrapped.cpp
     output_file = file_name.replace(".cpp", "_wrapped.cpp")
     with open(output_file, "w") as f:
         f.write(new_code)

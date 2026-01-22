@@ -4,9 +4,9 @@ import os
 import subprocess
 import numpy as np
 
-# 【改动 1】导入 SYCL 的宿主代码模板工具 
+# [修改] 导入 SYCL 模板工具
 from benchmark.template.sycl_host_template import create_sycl_func
-# 【改动 2】导入 SYCL 的编译工具 
+# [修改] 导入 SYCL 编译工具 (需确保 utils.py 里有 run_sycl_compilation)
 from benchmark.utils import run_sycl_compilation as run_compilation
 
 if __name__ == "__main__":
@@ -14,92 +14,79 @@ if __name__ == "__main__":
     parser.add_argument("--file", help="the source file")
     args = parser.parse_args()
     
+    # 假设文件名 "gemm_32_32_128.cpp"
     base_name = os.path.basename(args.file)
     shapes = base_name.split(".")[0]
     shape = [int(intg) for intg in shapes.split("_")[1:]]
     print(f"Testing Shapes: {shape}")
     
-    # 保持与 CUDA 版本一致的数据初始化逻辑
-    # 这里的 int8 和 float32 类型必须与你的 Kernel 签名一致
-    A = np.ones((shape[0], shape[1]), dtype=np.int8) 
-    x = np.ones((shape[1], shape[2]), dtype=np.int8) 
+    # 初始化数据 (int8 -> float 计算)
+    A = np.ones((shape[0], shape[1]), dtype=np.int8)
+    x = np.ones((shape[1], shape[2]), dtype=np.int8)
     
-    name = base_name.split("_")[0] # e.g., "gemm"
+    name = base_name.split("_")[0] # "gemm"
     y_ctypes = np.zeros((shape[0], shape[2]), dtype=np.float32)
 
-    # 转换为 ctypes 指针
-    A_ptr = A.ctypes.data_as(ctypes.POINTER(ctypes.c_int8))
-    x_ptr = x.ctypes.data_as(ctypes.POINTER(ctypes.c_int8))
+    # 指针转换
+    A_ptr = A.ctypes.data_as(ctypes.POINTER(ctypes.c_int8)) # 模拟 half (2 bytes) 的一部分，这里为了测试流程通畅，先用 int8 传
+    # [修正] 真正的 half 是 2 字节。为了配合 C++ 的 half*，我们在 Python 端最好用 int16 容器来装数据，否则步长不对
+    # 但你的原版代码用的是 int8，我们先保持原版逻辑。
+    # 如果 C++ 是 half*，Python 传 c_int8*，会导致 C++ 读数据步长翻倍。
+    # 这里我们严格对应 C++ 的 half (2 bytes)。
+    A_half = A.astype(np.float16)
+    x_half = x.astype(np.float16)
+    
+    A_ptr = A_half.ctypes.data_as(ctypes.POINTER(ctypes.c_uint16))
+    x_ptr = x_half.ctypes.data_as(ctypes.POINTER(ctypes.c_uint16))
     y_ptr = y_ctypes.ctypes.data_as(ctypes.POINTER(ctypes.c_float))
 
-    # Numpy 计算基准结果 (Golden Result)
-    y_np = np.matmul(A.astype(np.int16), x.astype(np.int16)).astype(np.float32)
+    # Numpy Golden Result
+    y_np = np.matmul(A_half.astype(np.float32), x_half.astype(np.float32))
 
-    # 【改动 3】文件后缀处理：SYCL 代码通常是 .cpp
+    # [修改] 编译过程
     so_name = args.file.replace(".cpp", ".so")
-    
-    # 【改动 4】生成带有 SYCL Runtime (Queue/Malloc) 的包装代码
+    # 使用 SYCL 模板生成 _wrapped.cpp
     file_name = create_sycl_func(args.file, op_type="matmul")
     
-    # 【改动 5】调用 icpx/dpcpp 编译
+    # 编译
     success, output = run_compilation(so_name, file_name)
-    
     if not success:
-        print(f"Compilation Failed:\n{output}")
+        print("Compilation Failed:")
+        print(output)
         exit(1)
-
-    os.remove(file_name) # 清理临时生成的包装文件
+        
+    # os.remove(file_name) # 调试时可以先注释掉删除
     
-    # 加载动态库 (逻辑与 CUDA 完全一致)
+    # 加载库
     lib = ctypes.CDLL(os.path.join(os.getcwd(), so_name))
+    function = getattr(lib, name + "_kernel")
     
-    # 【注意】你的模板里生成的函数名必须加上 "_kernel" 后缀，或者在这里调整
-    try:
-        function = getattr(lib, name + "_kernel")
-    except AttributeError:
-        # 如果 SYCL 编译器没有正确处理 extern "C"，名字可能会乱，这里是调试的好地方
-        print(f"Error: Could not find function '{name}_kernel' in {so_name}")
-        exit(1)
-
-    # 定义参数类型：3个指针 + 3个尺寸 (M, N, K)
+    # 定义参数: A*, B*, C*, m, k, n, size1, size2, size3
     function.argtypes = [
-        ctypes.POINTER(ctypes.c_int8),
-        ctypes.POINTER(ctypes.c_int8),
-        ctypes.POINTER(ctypes.c_float),
-        ctypes.c_int,
-        ctypes.c_int,
-        ctypes.c_int,
+        ctypes.POINTER(ctypes.c_uint16), # half*
+        ctypes.POINTER(ctypes.c_uint16), # half*
+        ctypes.POINTER(ctypes.c_float),  # float*
+        ctypes.c_int, ctypes.c_int, ctypes.c_int, # m, k, n
+        ctypes.c_int, ctypes.c_int, ctypes.c_int  # size1, size2, size3
     ]
     function.restype = None
     
-    # 执行 SYCL Kernel
-    print("Running SYCL kernel...")
+    # 计算 Size
+    size1 = shape[0] * shape[1] # M*K
+    size2 = shape[1] * shape[2] # K*N
+    size3 = shape[0] * shape[2] # M*N
+
+    # 调用
+    print("Running SYCL Kernel...")
     function(
-        A_ptr,
-        x_ptr,
-        y_ptr,
-        np.prod([shape[0], shape[1]]), # Size A
-        np.prod([shape[1], shape[2]]), # Size B
-        np.prod([shape[0], shape[2]]), # Size C (注意：这里可能是传递 M, N, K 还是 total size，取决于你的 kernel 写法)
+        A_ptr, x_ptr, y_ptr,
+        shape[0], shape[1], shape[2],
+        size1, size2, size3
     )
     
-    # 验证结果
-    try:
-        np.testing.assert_allclose(
-            y_ctypes,
-            y_np,
-            rtol=1e-03,
-            atol=1e-03,
-            equal_nan=True,
-            err_msg="SYCL result does not match Numpy baseline!",
-            verbose=True,
-        )
-        print("Verification successful! SYCL works!")
-    except AssertionError as e:
-        print(str(e))
-        print("First 10 mismatches (Calculated vs Expected):")
-        print(y_ctypes.flatten()[:10])
-        print(y_np.flatten()[:10])
-
-    # 清理 .so 文件
+    # 校验
+    np.testing.assert_allclose(
+        y_ctypes, y_np, rtol=1e-03, atol=1e-03, verbose=True
+    )
+    print("Verification successful!")
     subprocess.run(["rm", so_name])
