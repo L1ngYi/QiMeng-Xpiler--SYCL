@@ -2,7 +2,7 @@
 #include <vector>
 
 using namespace sycl;
-
+using half = sycl::half;
 // 这是你的 Kernel 实现
 // 它接收的 A, B, C 已经是 Device 端的指针了（由外层包装器分配）
 // q 也是由外层传入的
