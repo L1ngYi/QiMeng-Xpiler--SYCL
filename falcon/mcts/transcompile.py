@@ -299,7 +299,7 @@ def build_env(file_name, source_platform="cpu", target_platform="cuda"):
     """构建 FalconGo 环境的工厂函数"""
     action_len = len(ActionSpace)
     base_name = os.path.basename(file_name)
-    op_name = base_name.split("_")[0]
+    op_name = base_name.split("_")[0] #根据文件名提取操作名称，例如 gemm_32_32_128.cu -> gemm
     optimizer_len = 14 # 硬编码的最大优化步数
     tvm_env = FalconGo(
         file_name,

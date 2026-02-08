@@ -8,6 +8,11 @@ from falcon.smt.loop_transformation.loop_contraction import (
 )
 from falcon.smt.loop_transformation.loop_fusion import ast_loop_fusion
 from falcon.smt.loop_transformation.loop_recovery import ast_loop_recovery
+
+from falcon.smt.loop_transformation.sycl_loop_recovery import (
+    ast_sycl_loop_recovery,
+)
+
 from falcon.smt.loop_transformation.loop_reorder import ast_loop_reorder
 from falcon.smt.loop_transformation.loop_split import ast_loop_split
 from falcon.smt.software_pipeline import smt_double_buffer
@@ -43,19 +48,30 @@ from falcon.unit_test import unit_test
 def loop_recovery(file_name, code, source_platform, target_platform):
     """
     动作：循环恢复
-    功能：将特定硬件（如CUDA）的并行代码还原为标准的串行C++循环代码 (IR)。
+    功能：将特定硬件（如CUDA/SYCL）的并行代码还原为标准的串行C++循环代码 (IR)。
     策略：优先使用LLM进行语义理解和恢复，失败则使用AST规则。
     """
     try:
-        # 尝试使用 LLM 进行恢复
+        # 尝试使用 LLM 进行恢复 (基于文本/概率)
         final_code = run_loop_recovery(code, source_platform)
+        
         # 运行单元测试验证正确性
         if not unit_test(file_name, final_code)[0]:
-            raise RuntimeError("loop recovery error")
-    except Exception:
-        # LLM 失败或校验不通过，回退到 AST 规则恢复
-        final_code = ast_loop_recovery(code, source_platform)
+            raise RuntimeError("loop recovery error (LLM check failed)")
+            
+    except Exception as e:
+        print(f"[Info] LLM failed ({e}), falling back to AST rule-based recovery...")
+        
+        # LLM 失败或校验不通过，回退到 AST 规则恢复 (基于编译器/规则)
+        if source_platform == "sycl":
+            # [新增] 接入 SYCL 的 AST 处理入口
+            final_code = ast_sycl_loop_recovery(code)
+        else:
+            # 原有的 CUDA/HIP 处理入口
+            final_code = ast_loop_recovery(code, source_platform)
+            
     return final_code
+
 
 
 def stmt_split(file_name, code, source_platform, target_platform):

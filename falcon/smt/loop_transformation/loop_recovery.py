@@ -114,7 +114,6 @@ def ast_loop_recovery(code, target="cuda"):
     code = simplify_code(code)
     code = constant_inline(code)
     code = ast_stmt_simplification(code)
-    # TODO: change the code
     if target == "cuda" or target == "hip":
         code = code.replace("threadIdx.x", "threadIdxx")
         code = code.replace("threadIdx.y", "threadIdxy")

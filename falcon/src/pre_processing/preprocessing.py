@@ -12,6 +12,8 @@ from falcon.simplification import simplify_code
 from falcon.src.pre_processing.preprocessing_prompt import (
     LOOP_RECOVERY_DEMO_CUDA,
     LOOP_RECOVERY_PROMPT_CUDA,
+    LOOP_RECOVERY_PROMPT_SYCL,
+    LOOP_RECOVERY_DEMO_SYCL,
 )
 from falcon.src.prompt.prompt import SYSTEM_PROMPT
 # 导入基于 AST 的语句简化工具
@@ -51,18 +53,14 @@ def run_loop_recovery(code, target):
     if target == "cuda" or target == "hip":
         prompt_des = LOOP_RECOVERY_PROMPT_CUDA
     elif target == "sycl":
-        #TODO: 添加 SYCL 的 Loop Recovery Prompt
-        #prompt_des = LOOP_RECOVERY_PROMPT_SYCL
-        pass
+        prompt_des = LOOP_RECOVERY_PROMPT_SYCL
 
     prompt_demo = None
     # 根据目标平台选择对应的 Few-Shot 示例
     if target == "cuda" or target == "hip":
         prompt_demo = LOOP_RECOVERY_DEMO_CUDA
     elif target == "sycl":
-        #TODO: 添加 SYCL 的 Loop Recovery Demo
-        #prompt_demo = LOOP_RECOVERY_DEMO_SYCL
-        pass
+        prompt_demo = LOOP_RECOVERY_DEMO_SYCL
     
 
 
