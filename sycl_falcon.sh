@@ -36,16 +36,16 @@ for dir_pair in "${DIRECTIONS[@]}"; do
     echo "=========================================="
     echo "=== Pipeline: $src_plat -> $dst_plat ==="
     echo "=========================================="
-    
+
     # 查找所有 .cpp 文件
     # 使用 compgen 处理通配符，防止没有文件时报错
     files=$(compgen -G "$src_dir"/*.cpp || echo "")
-    
+
     if [ -z "$files" ]; then
         echo "   [WARN] No .cpp files found in $src_dir"
         continue
     fi
-    
+
     i=0
     # 统计文件数量
     file_arr=($files)
@@ -56,20 +56,16 @@ for dir_pair in "${DIRECTIONS[@]}"; do
         filename=$(basename "$src_file")
 
         printf "   [%3d/%3d] Translating %-30s ... " "$i" "$total" "$filename"
-        
+
         # 3. 运行转换命令
-        # 关键修改：
-        # --max_depth 2: 因为我们只做 Loop Recovery，不需要搜很深
-        # --num_simulations 4: 减少模拟次数，加快速度（因为路径是确定的）
-        # > /tmp/falcon.log 2>&1: 捕获日志，只有失败时才打印出来
-        
-        if python3 "$TRANSLATOR_PY" \
+        # 【关键修改】：加上 PYTHONPATH=. 解决找不到 benchmark 模块的问题
+        if PYTHONPATH=. python3 "$TRANSLATOR_PY" \
             --source "$src_plat" \
             --target "$dst_plat" \
             --file_name "$src_file" \
             --max_depth 2 \
             --num_simulations 4 > /tmp/falcon_trans.log 2>&1; then
-            
+
             echo "✅ Success"
         else
             echo "❌ Failed"
@@ -77,7 +73,7 @@ for dir_pair in "${DIRECTIONS[@]}"; do
             tail -n 20 /tmp/falcon_trans.log
             echo "---------------------------------"
             # 失败后是否继续？取消注释下面的 exit 1 可以遇到错误立即停止
-            # exit 1 
+            # exit 1
         fi
     done
     printf "\n"
