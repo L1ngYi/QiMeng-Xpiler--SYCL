@@ -1,350 +1,404 @@
 import sys
 import clang.cindex
 from clang.cindex import CursorKind, TokenKind
-
-# 配置 libclang 路径（根据你的环境修改）
-# clang.cindex.Config.set_library_path("/usr/lib/llvm-14/lib")
+import tempfile
+import os
+import re
 
 class SyclKernelExtractor:
-    def __init__(self, file_path):
+    def __init__(self, file_path, source_code):
         self.file_path = file_path
+        self.source_code = source_code
+        # 【关键修复】：将源码转成字节流，专门应付底层返回的 byte offset
+        self.source_code_bytes = source_code.encode('utf-8')
         self.index = clang.cindex.Index.create()
-        # 解析时必须开启 C++17 或更高，并保留宏
         self.tu = self.index.parse(
             file_path,
-            args=['-std=c++17', '-x', 'c++', '-fsyntax-only']
+            args=['-std=c++17', '-x', 'c++', '-w', '-fparse-all-comments']
         )
-        self.source_code = self._read_source()
-
-    def _read_source(self):
-        with open(self.file_path, 'r', encoding='utf-8') as f:
-            return f.read()
 
     def _get_text(self, cursor):
-        """准确提取 AST 节点对应的源码文本"""
         start = cursor.extent.start.offset
         end = cursor.extent.end.offset
-        return self.source_code[start:end]
+        # 【关键修复】：在 byte 数组上切片，然后安全解码！免疫所有中文注释错位！
+        return self.source_code_bytes[start:end].decode('utf-8', 'ignore')
 
     def find_kernels(self):
-        """入口：查找所有 parallel_for 并提取信息"""
         kernels = []
-        self._recursive_find_parallel_for(self.tu.cursor, kernels)
+        self._recursive_find_submit(self.tu.cursor, kernels)
         return kernels
 
+    def _recursive_find_submit(self, cursor, results):
+        #if cursor.kind in [CursorKind.CALL_EXPR, CursorKind.UNEXPOSED_EXPR, CursorKind.CXX_MEMBER_CALL_EXPR]:
+        if cursor.kind in [CursorKind.CALL_EXPR, CursorKind.UNEXPOSED_EXPR]:
+            text = self._get_text(cursor)
+            # 定位 q.submit() 调用
+            if '.submit' in text.split('(')[0] or 'submit' in text.split('(')[0]:
+                sub_kernels = []
+                self._recursive_find_parallel_for(cursor, sub_kernels)
+                if sub_kernels:
+                    for k in sub_kernels:
+                        k['submit_node'] = cursor
+                        results.append(k)
+                    return
+        
+        for child in cursor.get_children():
+            self._recursive_find_submit(child, results)
+
     def _recursive_find_parallel_for(self, cursor, results):
-        # 匹配函数调用且名字是 parallel_for
-        if cursor.kind == CursorKind.CALL_EXPR and cursor.spelling == 'parallel_for':
-            try:
-                kernel_info = self._analyze_kernel_invocation(cursor)
-                if kernel_info:
-                    results.append(kernel_info)
-            except Exception as e:
-                print(f"[Warn] 解析 Kernel 失败: {e}")
+        #if cursor.kind in [CursorKind.CALL_EXPR, CursorKind.UNEXPOSED_EXPR, CursorKind.CXX_MEMBER_CALL_EXPR]:
+        if cursor.kind in [CursorKind.CALL_EXPR, CursorKind.UNEXPOSED_EXPR]:
+            text = self._get_text(cursor)
+            if 'parallel_for' in text.split('(')[0]:
+                try:
+                    kernel_info = self._analyze_kernel_invocation(cursor)
+                    if kernel_info:
+                        results.append(kernel_info)
+                except Exception as e:
+                    print(f"[Warn] 解析 Kernel 失败: {e}")
+                return
         
         for child in cursor.get_children():
             self._recursive_find_parallel_for(child, results)
 
     def _analyze_kernel_invocation(self, call_node):
-        """分析 parallel_for 的参数，不依赖固定位置"""
-        args = list(call_node.get_arguments())
-        
-        range_node = None
+        call_text = self._get_text(call_node)
         lambda_node = None
+        range_node = None
         
-        # 1. 智能参数识别
-        for arg in args:
-            arg_type = arg.type.spelling
-            # 去除 const/ref 修饰以便匹配
-            clean_type = arg_type.replace("const", "").replace("&", "").strip()
-            
-            # 识别 Range / ND_Range
-            if "range" in clean_type and range_node is None:
-                range_node = arg
-            
-            # 识别 Lambda (AST 中通常显示为 lambda at line:col 或 class (lambda))
-            # 或者 UnexposedExpr 包裹的 Lambda
-            if lambda_node is None:
-                if arg.kind == CursorKind.LAMBDA_EXPR:
-                    lambda_node = arg
-                elif "lambda" in clean_type or "(lambda at" in clean_type:
-                    # 有时候 Lambda 被包裹在构造函数或转换中，需要钻取
-                    lambda_node = self._drill_down_to_lambda(arg)
+        for child in call_node.get_children():
+            clean_type = child.type.spelling.replace("const", "").replace("&", "").strip()
+            if "range" in clean_type or "nd_range" in clean_type:
+                range_node = child
+            elif child.kind == CursorKind.LAMBDA_EXPR or "lambda" in clean_type:
+                lambda_node = self._drill_down_to_lambda(child)
+            elif child.kind == CursorKind.UNEXPOSED_EXPR:
+                if "range" in self._get_text(child):
+                    range_node = child
+                elif "{" in self._get_text(child) and "[" in self._get_text(child):
+                    lambda_node = child
 
         if not range_node or not lambda_node:
-            print(f"[Debug] 无法识别参数: Range={range_node}, Lambda={lambda_node}")
             return None
 
-        # 2. 提取维度和边界
         dims, bounds = self._parse_range(range_node)
-        
-        # 3. 分析 Lambda (参数、捕获、体)
         kernel_data = self._analyze_lambda(lambda_node, dims)
         
         return {
             "dims": dims,
             "bounds": bounds,
-            "captures": kernel_data['captures'],
             "body": kernel_data['body'],
             "index_var": kernel_data['index_var']
         }
 
     def _drill_down_to_lambda(self, node):
-        """递归向下寻找真正的 LambdaExpr 节点"""
-        if node.kind == CursorKind.LAMBDA_EXPR:
+        if node.kind == CursorKind.LAMBDA_EXPR: return node
+        if "{" in self._get_text(node):
+            for child in node.get_children():
+                if child.kind == CursorKind.LAMBDA_EXPR: return child
             return node
-        for child in node.get_children():
-            res = self._drill_down_to_lambda(child)
-            if res: return res
         return node
 
     def _parse_range(self, range_node):
-        """解析 range<N>(d1, d2...)"""
-        # 获取 range 的模板参数 N (维度)
-        # 这里用文本分析作为后备，因为 libclang 对模板参数支持一般
         text = self._get_text(range_node)
-        
-        # 尝试推断维度
         dims = 1
-        if "range<2>" in text or "nd_range<2>" in text: dims = 2
-        elif "range<3>" in text or "nd_range<3>" in text: dims = 3
+        if "<2>" in text: dims = 2
+        elif "<3>" in text: dims = 3
         
-        # 提取构造函数的参数 (循环边界)
-        # 遍历 range_node 的子节点，找到 INTEGER_LITERAL 或 DECL_REF_EXPR
+        # 智能上下文回溯：解决变量传递问题 (如 global_size(m, n))
+        range_map = {}
+        for match in re.finditer(r'range<\d+>\s+(\w+)\s*\(([^)]+)\)', self.source_code):
+            var_name = match.group(1)
+            args = [arg.strip() for arg in match.group(2).split(',')]
+            range_map[var_name] = args
+            
         bounds = []
-        for child in range_node.get_children():
-            # 过滤掉类型引用等杂项，只看表达式
-            if child.kind in [CursorKind.INTEGER_LITERAL, CursorKind.DECL_REF_EXPR, CursorKind.UNEXPOSED_EXPR]:
-                bounds.append(self._get_text(child))
+        direct_match = re.search(r'(?:nd_)?range<\d+>\s*\(([^)]+)\)', text)
+        if direct_match:
+            args = [arg.strip() for arg in direct_match.group(1).split(',')]
+            # 如果参数是一个已知变量名，展开它
+            if args[0] in range_map:
+                bounds = range_map[args[0]]
+            else:
+                bounds = args
         
-        # 如果参数不够，补全（针对 nd_range，可能需要取前一半作为 global_range）
-        if "nd_range" in text and len(bounds) >= dims * 2:
-            bounds = bounds[:dims] # 取 Global Range
+        if not bounds:
+            bounds = ['N', 'M', 'K'][:dims]
             
         return dims, bounds
 
     def _analyze_lambda(self, lambda_node, dims):
-        """深入分析 Lambda 内部"""
-        # 1. 获取 Kernel 索引变量名 (item / idx)
-        # Lambda 的子节点中，第一个 PARM_DECL 通常是索引
         index_var = "item"
-        children = list(lambda_node.get_children())
+        lambda_text = self._get_text(lambda_node)
+        idx_match = re.search(r'\(\s*(?:nd_)?item<\d+>\s+(\w+)\s*\)', lambda_text)
+        if idx_match:
+            index_var = idx_match.group(1)
+        
         body_node = None
-        
-        for child in children:
-            if child.kind == CursorKind.PARM_DECL:
-                index_var = child.spelling
-            elif child.kind == CursorKind.COMPOUND_STMT:
+        for child in lambda_node.get_children():
+            if child.kind == CursorKind.COMPOUND_STMT:
                 body_node = child
-
-        if not body_node:
-            raise ValueError("Lambda body not found")
-
-        # 2. 真正的捕获分析 (Def-Use Chain)
-        captures = []
-        # 获取 Lambda 的起始位置
-        lambda_start_offset = lambda_node.extent.start.offset
         
-        def visit_for_captures(node):
-            if node.kind == CursorKind.DECL_REF_EXPR:
-                ref_node = node.referenced
-                if ref_node:
-                    # 如果变量定义在 Lambda 之前，则是捕获变量
-                    # 且排除掉全局变量（通常不需要作为参数传递，或者需要特殊处理）
-                    def_offset = ref_node.extent.start.offset
-                    if def_offset < lambda_start_offset:
-                        # 排除函数名引用、全局常量等
-                        if ref_node.kind in [CursorKind.VAR_DECL, CursorKind.PARM_DECL]:
-                            # 获取类型
-                            type_name = ref_node.type.spelling
-                            captures.append((node.spelling, type_name))
-            
-            for child in node.get_children():
-                visit_for_captures(child)
+        if not body_node:
+            start_idx = lambda_text.find('{')
+            end_idx = lambda_text.rfind('}')
+            if start_idx != -1 and end_idx != -1:
+                raw_body = lambda_text[start_idx:end_idx+1]
+            else:
+                raise ValueError("Lambda body not found")
+        else:
+            raw_body = self._get_text(body_node)
 
-        visit_for_captures(body_node)
-        # 去重
-        unique_captures = list(set(captures))
-
-        # 3. Body 转换 (Token 级替换)
-        # 我们需要将 body 中的 item.get_global_id(0) 替换为循环变量
-        trans_body = self._rewrite_body_tokens(body_node, index_var, dims)
+        trans_body = self._rewrite_body_tokens(raw_body, index_var, dims)
 
         return {
             "index_var": index_var,
-            "captures": unique_captures,
             "body": trans_body
         }
 
-    def _rewrite_body_tokens(self, body_node, index_var, dims):
-        """基于 Token 的安全代码重写"""
-        tokens = list(self.tu.get_tokens(extent=body_node.extent))
-        output_parts = []
-        i = 0
+    def _rewrite_body_tokens(self, body_text, index_var, dims):
+        # 使用不易冲突的专属变量名
+        loop_vars = ["__sycl_i", "__sycl_j", "__sycl_k"]
         
-        # 定义目标循环变量名
-        loop_vars = ["i", "j", "k"] # 对应 dim 0, 1, 2
-
-        while i < len(tokens):
-            t = tokens[i]
-            replaced = False
+        for i in range(dims):
+            # 替换 item.get_global_id(0) -> __sycl_i
+            pattern = rf'{index_var}\s*\.\s*get_global_id\s*\(\s*{i}\s*\)'
+            body_text = re.sub(pattern, loop_vars[i], body_text)
             
-            # 检测模式: index_var . get_global_id ( N )
-            # 例如: item.get_global_id(0)
-            if t.spelling == index_var:
-                # 向前看 5 个 token
-                if i + 5 < len(tokens):
-                    t1 = tokens[i+1] # .
-                    t2 = tokens[i+2] # get_global_id / get_id
-                    t3 = tokens[i+3] # (
-                    t4 = tokens[i+4] # 0/1/2
-                    t5 = tokens[i+5] # )
-                    
-                    if t1.spelling == '.' and 'get' in t2.spelling and t3.spelling == '(':
-                        # 确定维度
-                        dim_idx = 0
-                        if t4.kind == TokenKind.LITERAL:
-                            dim_idx = int(t4.spelling)
-                        
-                        # 执行替换：换成对应的循环变量 i, j, k
-                        if dim_idx < len(loop_vars):
-                            output_parts.append(loop_vars[dim_idx])
-                            i += 6 # 跳过这 6 个 token
-                            replaced = True
-            
-            # 检测模式: 直接使用 idx[0] (如果是 id<N> 类型)
-            if not replaced and t.spelling == index_var:
-                 if i + 3 < len(tokens) and tokens[i+1].spelling == '[':
-                      # item[0] -> i
-                      dim_token = tokens[i+2]
-                      if dim_token.kind == TokenKind.LITERAL:
-                           dim = int(dim_token.spelling)
-                           output_parts.append(loop_vars[dim])
-                           i += 4
-                           replaced = True
-            
-            if not replaced:
-                # 简单处理：如果是 } 或 { 后面加换行，其他加空格
-                # 实际工程可以用 SourceLocation 精确还原空格
-                output_parts.append(t.spelling)
-                output_parts.append(" ")
-                i += 1
+            # 替换 item[0] -> __sycl_i
+            pattern_idx = rf'{index_var}\s*\[\s*{i}\s*\]'
+            body_text = re.sub(pattern_idx, loop_vars[i], body_text)
         
-        # 简单的后处理，去掉首尾花括号
-        return "".join(output_parts).strip().lstrip("{").rstrip("}")
+        return body_text.strip().lstrip("{").rstrip("}")
 
-    def generate_cpp_code(self, kernel_info):
-        """生成最终 C++ 代码"""
+    def generate_loops_only(self, kernel_info):
         dims = kernel_info['dims']
         bounds = kernel_info['bounds']
-        captures = kernel_info['captures']
         
-        # 1. 生成参数列表
-        args_str = ", ".join([f"{typ} {name}" for name, typ in captures])
-        
-        # 2. 生成循环头
         loops = ""
         indent = "    "
-        loop_vars = ["i", "j", "k"]
+        loop_vars = ["__sycl_i", "__sycl_j", "__sycl_k"]
         
         for d in range(dims):
-            # 注意：SYCL range<2>(R, C) 通常 dim 0 是 Row，dim 1 是 Col
-            # 这里的 bounds 需要对应。假设 bounds 顺序正确。
             limit = bounds[d] if d < len(bounds) else "N"
             var = loop_vars[d]
             loops += f"{indent * (d+1)}for (int {var} = 0; {var} < {limit}; ++{var}) {{\n"
         
-        # 3. 填充 Body
         body_lines = kernel_info['body'].splitlines()
         formatted_body = "\n".join([f"{indent * (dims+1)}{line.strip()}" for line in body_lines if line.strip()])
         
-        # 4. 闭合循环
         closing = ""
         for d in reversed(range(dims)):
              closing += f"{indent * (d+1)}}}\n"
 
-        code = f"""
-void kernel_recovered({args_str}) {{
-{loops}
-{formatted_body}
-{closing}
-}}
-"""
-        return code
+        return f"{loops}{formatted_body}\n{closing}"
 
 
 
-
-import tempfile
-import os
 
 def ast_sycl_loop_recovery(code):
-    """
-    [新增] SYCL AST 恢复的适配器入口。
-    适配 actions.py 的接口：输入字符串 -> 输出字符串。
-    """
-    # 1. 创建临时文件保存 code 字符串
-    # 后缀必须是 .cpp，否则 Clang 可能会拒绝解析或无法识别 C++ 语法
-    fd, path = tempfile.mkstemp(suffix=".cpp")
-    try:
-        # 将内存中的代码写入临时文件
-        with os.fdopen(fd, 'w', encoding='utf-8') as tmp:
-            tmp.write(code)
-        
-        # 2. 调用核心提取器
-        extractor = SyclKernelExtractor(path)
-        kernels = extractor.find_kernels()
-        
-        if not kernels:
-            # 如果没找到 Kernel，抛出异常以触发外层的错误处理（或返回原代码）
-            raise RuntimeError("SYCL AST Parsing failed: No kernels found in source.")
-            
-        # 3. 生成代码
-        # 通常 Benchmark 文件里只有一个核心 Kernel，直接提取。
-        # 如果有多个，拼接返回。
-        recovered_code_parts = []
-        for k in kernels:
-            recovered_code_parts.append(extractor.generate_cpp_code(k))
-            
-        return "\n".join(recovered_code_parts)
-
-    except Exception as e:
-        print(f"[Error] SYCL AST Logic Failed: {e}")
-        # 重新抛出异常，让上层决定是中断还是怎么处理
-        raise e
-    finally:
-        # 4. 清理临时文件
-        if os.path.exists(path):
-            os.remove(path)
-
-# --- 使用示例 ---
-if __name__ == "__main__":
-    # 创建一个模拟文件
-    with open("test_kernel.cpp", "w") as f:
-        f.write("""
-        #include <sycl/sycl.hpp>
-        using namespace sycl;
-        
-        void complicated_kernel(queue &q, float *A, float *B, int H, int W) {
-            q.submit([&](handler &h) {
-                // 定义 accessor，测试类型提取
-                accessor acc_A(A, h, read_only);
-                
-                h.parallel_for(range<3>(H, W, 16), [=](item<3> item) {
-                    int r = item.get_global_id(0);
-                    int c = item.get_global_id(1);
-                    // 外部变量捕获测试
-                    if (r < H && c < W) {
-                        B[r * W + c] = acc_A[r * W + c] * 2.0f;
-                    }
-                });
-            });
-        }
-        """)
-
-    extractor = SyclKernelExtractor("test_kernel.cpp")
-    kernels = extractor.find_kernels()
+    import traceback
+    import tempfile
+    import os
+    import re
     
-    for k in kernels:
-        print("=== Recovered Kernel ===")
-        print(extractor.generate_cpp_code(k))
+    # 行车记录仪 1：记录原始输入
+    with open("/tmp/ast_spy_input.log", "w", encoding="utf-8") as f:
+        f.write("=== 原始输入代码 ===\n" + code)
+        
+    try:
+        mock_sycl = """
+#include <stdint.h>
+namespace sycl {
+    template <int dimensions = 1> struct range { range(int, int=1, int=1){} };
+    template <int dimensions = 1> struct nd_range { nd_range(range<dimensions>, range<dimensions>){} };
+    template <int dimensions = 1> struct id { int operator[](int) const; };
+    template <int dimensions = 1> struct item { int get_global_id(int) const; };
+    template <int dimensions = 1> struct nd_item { int get_global_id(int) const; };
+    struct handler {
+        template<typename T, typename F> void parallel_for(T, F) {}
+        template<typename T, typename F> void parallel_for(nd_range<2>, F) {}
+    };
+    struct queue {
+        template<typename F> void submit(F) {}
+        void wait() {}
+    };
+    typedef uint16_t half;
+}
+"""
+        code_without_include = re.sub(r'#include\s*<sycl/sycl\.hpp>', '', code)
+        mocked_code = mock_sycl + "\n" + code_without_include
+        
+        fd, path = tempfile.mkstemp(suffix=".cpp")
+        try:
+            with os.fdopen(fd, 'w', encoding='utf-8') as tmp:
+                tmp.write(mocked_code)
+            
+            extractor = SyclKernelExtractor(path, mocked_code)
+            kernels = extractor.find_kernels()
+            
+            if not kernels:
+                raise RuntimeError("SYCL AST Parsing failed: No kernels found in source.")
+                
+            final_code = mocked_code
+            for k in kernels:
+                loops_code = extractor.generate_loops_only(k)
+                submit_text = extractor._get_text(k['submit_node'])
+                final_code = final_code.replace(submit_text, loops_code)
+                
+            final_code = final_code.replace(mock_sycl + "\n", "")
+            final_code = final_code.replace("using namespace sycl;", "")
+            final_code = final_code.replace("using half = sycl::half;", "typedef uint16_t half;")
+            final_code = re.sub(r',\s*(?:sycl::)?queue\s*[*&]?\s*\w+', '', final_code)
+            final_code = re.sub(r'(?:sycl::)?queue\s*[*&]?\s*\w+\s*,', '', final_code)
+            final_code = re.sub(r'^(\s*)(?:sycl::)?(?:nd_)?range<.*?;', r'\1// [Removed by AST] \g<0>', final_code, flags=re.MULTILINE)
+            
+            if "<stdint.h>" not in final_code and "<cstdint>" not in final_code:
+                final_code = "#include <stdint.h>\n" + final_code
+            if "<vector>" not in final_code:
+                final_code = "#include <vector>\n" + final_code
+                
+            # 行车记录仪 2：记录成功生成的输出
+            with open("/tmp/ast_spy_output.log", "w", encoding="utf-8") as f:
+                f.write("=== AST 成功生成代码 ===\n" + final_code)
+                
+            return final_code
+            
+        finally:
+            if os.path.exists(path):
+                os.remove(path)
+                
+    except Exception as e:
+        # 行车记录仪 3：记录任何导致崩溃的异常
+        with open("/tmp/ast_spy_error.log", "w", encoding="utf-8") as f:
+            f.write("=== AST 引擎内部崩溃 ===\n")
+            f.write(traceback.format_exc())
+        # 抛出异常或返回原代码（框架如果捕捉，就会导致 new_code == code 从而 -10000）
+        raise e
+# def ast_sycl_loop_recovery(code):
+#     # 构建 Mock SYCL 空间，骗过 Clang 的解析器
+#     mock_sycl = """
+# #include <stdint.h>
+# namespace sycl {
+#     template <int dimensions = 1> struct range { range(int, int=1, int=1){} };
+#     template <int dimensions = 1> struct nd_range { nd_range(range<dimensions>, range<dimensions>){} };
+#     template <int dimensions = 1> struct id { int operator[](int) const; };
+#     template <int dimensions = 1> struct item { int get_global_id(int) const; };
+#     template <int dimensions = 1> struct nd_item { int get_global_id(int) const; };
+#     struct handler {
+#         template<typename T, typename F> void parallel_for(T, F) {}
+#         template<typename T, typename F> void parallel_for(nd_range<2>, F) {}
+#     };
+#     struct queue {
+#         template<typename F> void submit(F) {}
+#         void wait() {}
+#     };
+#     typedef uint16_t half;
+# }
+# """
+#     # 删掉物理包含，避免报错
+#     code_without_include = re.sub(r'#include\s*<sycl/sycl\.hpp>', '', code)
+#     mocked_code = mock_sycl + "\n" + code_without_include
+    
+#     fd, path = tempfile.mkstemp(suffix=".cpp")
+#     try:
+#         with os.fdopen(fd, 'w', encoding='utf-8') as tmp:
+#             tmp.write(mocked_code)
+        
+#         extractor = SyclKernelExtractor(path, mocked_code)
+#         kernels = extractor.find_kernels()
+        
+#         if not kernels:
+#             raise RuntimeError("SYCL AST Parsing failed: No kernels found in source.")
+            
+#         final_code = mocked_code
+#         for k in kernels:
+#             loops_code = extractor.generate_loops_only(k)
+#             submit_text = extractor._get_text(k['submit_node'])
+#             final_code = final_code.replace(submit_text, loops_code)
+            
+#         # ==========================================
+#         # 终极保洁：抹除一切 SYCL 残骸，转化为纯 C++
+#         # ==========================================
+#         # 1. 清除注入的假头文件
+#         final_code = final_code.replace(mock_sycl + "\n", "")
+        
+#         # 2. 清除 using namespace sycl 和 sycl::half
+#         final_code = final_code.replace("using namespace sycl;", "")
+#         final_code = final_code.replace("using half = sycl::half;", "typedef uint16_t half;")
+        
+#         # 3. 从函数参数列表中强行挖去 queue &q
+#         # 匹配 ", queue &q", ", queue* q" 等
+#         final_code = re.sub(r',\s*(?:sycl::)?queue\s*[*&]?\s*\w+', '', final_code)
+#         # 匹配 "queue &q, " (如果它在第一个参数)
+#         final_code = re.sub(r'(?:sycl::)?queue\s*[*&]?\s*\w+\s*,', '', final_code)
+        
+#         # 4. 注释掉所有的 range 和 nd_range 声明
+#         final_code = re.sub(r'^(\s*)(?:sycl::)?(?:nd_)?range<.*?;', r'\1// [Removed by AST] \g<0>', final_code, flags=re.MULTILINE)
+        
+#         # 5. 确保包含必要的 C++ 头文件 (修复 uint16_t 找不到的致命错误)
+#         if "<stdint.h>" not in final_code and "<cstdint>" not in final_code:
+#             final_code = "#include <stdint.h>\n" + final_code
+#         if "<vector>" not in final_code:
+#             final_code = "#include <vector>\n" + final_code
+            
+#         # ==========================================
+#         # 强行打印出来让我们看看长什么样
+#         print("\n" + "="*50)
+#         print("[DEBUG] 恭喜！AST 引擎生成的纯 C++ 代码如下：")
+#         print("="*50)
+#         print(final_code)
+#         print("="*50 + "\n")
+        
+#         return final_code
+        
+#     finally:
+#         if os.path.exists(path):
+#             os.remove(path)
+
+
+# ==========================================
+# 沙盒测试入口：直接运行此文件，脱离 MCTS 框架
+# ==========================================
+# if __name__ == "__main__":
+#     import traceback
+    
+#     # 这是你真实的原始 SYCL 代码
+#     test_code = """
+# #include <sycl/sycl.hpp>
+# #include <vector>
+
+# using namespace sycl;
+# using half = sycl::half;
+
+# void gemm(half *A, half *B, float *C, int m, int k, int n, queue &q) {
+#     range<2> global_size(m, n);
+#     range<2> local_size(16, 16);
+
+#     q.submit([&](handler &h) {
+#         h.parallel_for(nd_range<2>(global_size, local_size), [=](nd_item<2> item) {
+#             int row = item.get_global_id(0);
+#             int col = item.get_global_id(1);
+
+#             if (row < m && col < n) {
+#                 float sum = 0.0f;
+#                 for (int i = 0; i < k; ++i) {
+#                     float val_a = static_cast<float>(A[row * k + i]);
+#                     float val_b = static_cast<float>(B[i * n + col]);
+#                     sum += val_a * val_b;
+#                 }
+#                 C[row * n + col] = sum;
+#             }
+#         });
+#     });
+# }
+#     """
+    
+#     print("=== [Sandbox] 开始单独测试 SYCL AST 引擎 ===")
+#     try:
+#         result = ast_sycl_loop_recovery(test_code)
+#         print("=== [Sandbox] 引擎执行成功！输出代码： ===")
+#         print(result)
+#     except Exception as e:
+#         print("=== [Sandbox] 引擎内部崩溃！致命错误堆栈： ===")
+#         traceback.print_exc()

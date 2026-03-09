@@ -102,8 +102,12 @@ def perf_pipeline(file_name):
     so_name = file_name.replace(".cpp", ".so")
     success, output = run_compilation(so_name, backup_file_name)
     if not success:
+        # ==========================================
+        # 间谍 1 号：强行截获底层 C++ 编译报错！
+        with open("/tmp/compiler_fatal_error.log", "w") as f:
+            f.write(f"Compilation Failed for {backup_file_name}:\n{output}\n")
+        # ==========================================
         raise RuntimeError(f"DLBoost Compilation Failed: {output}")
-
 
 def benchmark(file_name):
     execution_time = 0
@@ -154,7 +158,14 @@ def benchmark(file_name):
             print("Warning: Only gemm is fully supported in this patched dlboost perf.")
             return 0.1 # 返回一个假分数避免崩溃
 
+# ... 前面的测速逻辑保持不变 ...
     except Exception as e:
+        # ==========================================
+        # 间谍 2 号：强行截获 Python 测速时的崩溃堆栈！
+        import traceback
+        with open("/tmp/benchmark_fatal_error.log", "w") as f:
+            f.write(traceback.format_exc())
+        # ==========================================
         print(f"Benchmark failed: {e}")
         return 0.0
 

@@ -85,9 +85,13 @@ def main():
     args = parser.parse_args()
 
     # 【关键修改】匹配源目录下所有的 .cpp 文件  
+    # pattern = os.path.join(args.source_dir, "*.cpp")
+    # files = glob.glob(pattern)
     pattern = os.path.join(args.source_dir, "*.cpp")
-    files = glob.glob(pattern)
-    
+    all_files = glob.glob(pattern)
+    # 过滤掉生成的 _wrapped.cpp 或 _bak.cpp 中间文件
+    files = [f for f in all_files if not f.endswith("_wrapped.cpp") and not f.endswith("_bak.cpp")] 
+       
     if not files:
         print(
             f"[WARN] no .cpp files found in {args.source_dir}",

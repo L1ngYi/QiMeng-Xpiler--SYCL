@@ -54,7 +54,6 @@ def loop_recovery(file_name, code, source_platform, target_platform):
     try:
         # 尝试使用 LLM 进行恢复 (基于文本/概率)
         final_code = run_loop_recovery(code, source_platform)
-        
         # 运行单元测试验证正确性
         if not unit_test(file_name, final_code)[0]:
             raise RuntimeError("loop recovery error (LLM check failed)")

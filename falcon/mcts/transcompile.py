@@ -84,8 +84,18 @@ def objective(file_name, target):
         return GFLOPS / (time_ms / 1e3)
     except Exception as e:
         # 如果编译或运行失败，记录日志并返回 0 分
-        logging.info(e)
+        # =================【关键修改】=================
+        # 强行打印详细的错误堆栈，不要只留一行没用的 info
+        import traceback
+        print("\n" + "="*40)
+        print(f"[ERROR] Objective evaluation failed for {file_name} on {target}")
+        traceback.print_exc() 
+        print("="*40 + "\n")
+        # ==============================================
+        
         return 0.0
+        # logging.info(e)
+        # return 0.0
 
 
 class FalconGo:
