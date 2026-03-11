@@ -250,6 +250,7 @@ def get_target(code, target=None):
             "cuda": ".cu",
             "hip": ".hip",
             "cpu": ".cpp",
+            "sycl": ".cpp",
         }.get(target, ".cpp")
     # 简单的启发式检测：HIP
     if target == "hip" and ("__global__" in code or "threadIdx.x" in code):
@@ -266,10 +267,24 @@ def make_full_func(code, target=None):
     """
     生成完整的函数代码。
     如果是 CUDA/HIP 目标，会调用 add_parallel_variable_prefix 恢复特定的语法。
+    如果是 SYCL 目标，会确保 SYCL 头文件和命名空间存在。
     """
     target, _ = get_target(code, target)
     if target in ["cuda", "hip"]:
         code = add_parallel_variable_prefix(code)
+    elif target == "sycl":
+        # Ensure SYCL header and namespace are present
+        has_include = bool(re.search(r"#\s*include\s*<sycl/sycl\.hpp>", code))
+        has_namespace = "using namespace sycl;" in code
+        if not has_include:
+            code = "#include <sycl/sycl.hpp>\nusing namespace sycl;\n\n" + code
+        elif not has_namespace:
+            code = re.sub(
+                r"(#\s*include\s*<sycl/sycl\.hpp>)",
+                r"\1\nusing namespace sycl;",
+                code,
+                count=1,
+            )
     return code
 
 

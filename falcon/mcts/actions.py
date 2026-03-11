@@ -19,6 +19,7 @@ from falcon.smt.software_pipeline import smt_double_buffer
 from falcon.smt.stmt_split import ast_stmt_split
 from falcon.smt.tensorization.detensorization import ast_detensorization
 from falcon.smt.tensorization.tensorization import ast_tensorization
+from falcon.smt.sycl_thread_binding import ast_sycl_thread_binding
 from falcon.smt.thread_binding import ast_thread_binding
 
 # 导入基于 LLM（大模型）的转换实现，作为优先方案
@@ -162,17 +163,42 @@ def loop_contraction(file_name, code, source_platform, target_platform):
 def auto_bind(file_name, code, source_platform, target_platform):
     """
     动作：自动线程绑定
-    功能：将循环迭代变量映射到 GPU 的线程索引 (threadIdx, blockIdx)。
-    注意：仅适用于 CUDA/HIP (未来需添加 SYCL 支持)。
+    功能：将循环迭代变量映射到 GPU 的线程索引 (threadIdx, blockIdx) 或 SYCL 的 parallel_for。
+    注意：支持 CUDA、HIP 和 SYCL 目标平台。
     """
-    if target_platform not in ["cuda", "hip"]:
+    if target_platform not in ["cuda", "hip", "sycl"]:
         return code
+    if target_platform == "sycl":
+        try:
+            final_code = run_thread_binding(code, target_platform)
+            if not unit_test(file_name, final_code)[0]:
+                raise RuntimeError("auto_bind sycl error")
+        except Exception:
+            final_code = ast_sycl_thread_binding(code)
+        return final_code
     try:
         final_code = run_thread_binding(code, target_platform)
         if not unit_test(file_name, final_code)[0]:
             raise RuntimeError("auto_bind error")
     except Exception:
         final_code = ast_thread_binding(code, target_platform)
+    return final_code
+
+
+def sycl_bind(file_name, code, source_platform, target_platform):
+    """
+    动作：SYCL 线程绑定
+    功能：将串行 C++ for 循环转换为 SYCL parallel_for / q.submit 模式。
+    仅适用于 target_platform == "sycl"。
+    """
+    if target_platform != "sycl":
+        return code
+    try:
+        final_code = run_thread_binding(code, target_platform)
+        if not unit_test(file_name, final_code)[0]:
+            raise RuntimeError("sycl_bind error")
+    except Exception:
+        final_code = ast_sycl_thread_binding(code)
     return final_code
 
 
@@ -235,6 +261,7 @@ actions = [
     auto_cache,
     auto_tensorization,
     auto_pipeline,
+    sycl_bind,
 ]
 
 if __name__ == "__main__":
