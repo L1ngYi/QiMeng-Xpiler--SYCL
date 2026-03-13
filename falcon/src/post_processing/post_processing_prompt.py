@@ -156,6 +156,81 @@ if (blockIdx.x < 32) {
 ```
 """
 
+THREAD_BINDING_PROMPT_SYCL = """
+Thread Binding for SYCL
+
+Function Overview:
+You are tasked with identifying parallelizable loops in C++ code and converting them
+to SYCL parallel_for kernels submitted via a SYCL queue.
+
+The goal is to replace each outermost parallelizable for-loop with a
+``q.submit([&](handler &h) { h.parallel_for(...) })`` pattern.
+
+Application Scenario:
+Use this prompt to offload parallel C++ loops onto SYCL-capable devices (CPUs, GPUs,
+FPGAs) using the SYCL 2020 programming model.
+
+### Steps for Conversion:
+1. Add ``#include <sycl/sycl.hpp>`` and ``using namespace sycl;`` at the top.
+2. Add a ``sycl::queue &q`` parameter to the function signature.
+3. For each parallelisable outermost for-loop:
+   a. Determine the loop variable (e.g. ``i``) and its upper bound (e.g. ``size``).
+   b. Replace the loop with:
+      ```
+      q.submit([&](handler &h) {
+        h.parallel_for(range<1>(size), [=](item<1> item) {
+          int i = item.get_global_id(0);
+          <original loop body>
+        });
+      });
+      q.wait();
+      ```
+4. Remove the ``extern "C"`` specifier if present.
+
+### Example
+{THREAD_BINDING_DEMO_SYCL}
+
+### GPT Task:
+Please transform the following C++ code by converting its parallel loops to SYCL.
+
+#### Input Code:
+{cpp_code}
+
+#### Output SYCL Code:
+```
+"""
+
+THREAD_BINDING_DEMO_SYCL = """
+Usage Example:
+
+Input C++ Code:
+```cpp
+extern "C" void add(float *input1, float *input2, float *output) {
+  int size = 64;
+  for (int i = 0; i < size; i++) {
+    output[i] = input1[i] + input2[i];
+  }
+}
+```
+
+Desired Output SYCL Code:
+```cpp
+#include <sycl/sycl.hpp>
+using namespace sycl;
+
+void add(float *input1, float *input2, float *output, sycl::queue &q) {
+  int size = 64;
+  q.submit([&](handler &h) {
+    h.parallel_for(range<1>(size), [=](item<1> item) {
+      int i = item.get_global_id(0);
+      output[i] = input1[i] + input2[i];
+    });
+  });
+  q.wait();
+}
+```
+"""
+
 DECORATION_PROMPT = """
 Operation Recognition
 

@@ -10,7 +10,9 @@ from falcon.src.post_processing.post_processing_prompt import (
     DOUBLE_BUFFER_PROMPT,
     TENSORIZATION_PROMPT,
     THREAD_BINDING_DEMO_CUDA,
+    THREAD_BINDING_DEMO_SYCL,
     THREAD_BINDING_PROMPT_CUDA,
+    THREAD_BINDING_PROMPT_SYCL,
 )
 from falcon.src.prompt.prompt import SYSTEM_PROMPT
 from falcon.util import extract_code, make_full_func
@@ -31,6 +33,9 @@ def run_thread_binding(code, target):
     if target == "cuda" or target == "hip":
         prompt_demo = THREAD_BINDING_DEMO_CUDA
         THREAD_BINDING_PROMPT = THREAD_BINDING_PROMPT_CUDA
+    elif target == "sycl":
+        prompt_demo = THREAD_BINDING_DEMO_SYCL
+        THREAD_BINDING_PROMPT = THREAD_BINDING_PROMPT_SYCL
 
     PROMPT = PROMPT.replace("{THREAD_BINDING_PROMPT}", THREAD_BINDING_PROMPT)
     PROMPT = PROMPT.replace("{THREAD_BINDING_DEMO}", prompt_demo)

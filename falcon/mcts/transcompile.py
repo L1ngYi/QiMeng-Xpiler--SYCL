@@ -10,8 +10,8 @@ import tiktoken  # OpenAI 的分词器，用于将代码转换为向量表示
 from absl import app, flags
 from jax import jit, lax, vmap
 
-# 导入自定义的性能测试模块，用于在不同硬件(CUDA, CPU, HIP)上跑分
-from benchmark.perf import perf_cuda, perf_dlboost, perf_hip
+# 导入自定义的性能测试模块，用于在不同硬件(CUDA, CPU, HIP, SYCL)上跑分
+from benchmark.perf import perf_cuda, perf_dlboost, perf_hip, perf_sycl
 # 导入先验概率生成模块，用于引导 MCTS 搜索
 from falcon.mcts.action_logit import generate_prior_from_src
 # 导入动作空间，定义了所有可能的代码变换操作
@@ -79,6 +79,8 @@ def objective(file_name, target):
             time_ms = perf_dlboost.benchmark(file_name)
         elif target == "hip":
             time_ms = perf_hip.benchmark(file_name)
+        elif target == "sycl":
+            time_ms = perf_sycl.benchmark(file_name)
         
         # 计算性能得分：GFLOPS / 时间 (数值越大越好)
         return GFLOPS / (time_ms / 1e3)
