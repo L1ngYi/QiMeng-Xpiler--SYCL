@@ -22,6 +22,15 @@ if [ ! -d "$CPU_SRC_DIR" ]; then
     exit 1
 fi
 
+# 指定要处理的单个文件
+TARGET_FILE="gemm_32_32_128.cpp"
+src_file="${CPU_SRC_DIR}/${TARGET_FILE}"
+
+if [ ! -f "$src_file" ]; then
+    echo "[ERROR] Target file not found: $src_file"
+    exit 1
+fi
+
 for dir_pair in "${DIRECTIONS[@]}"; do
     src_plat=${dir_pair%%:*}
     dst_plat=${dir_pair##*:}
@@ -33,40 +42,25 @@ for dir_pair in "${DIRECTIONS[@]}"; do
     echo "=== Pipeline: $src_plat -> $dst_plat ==="
     echo "=========================================="
 
-    # Collect all .cpp files; handle empty directories gracefully
-    files=$(compgen -G "$src_dir"/*.cpp || echo "")
+    filename=$(basename "$src_file")
+    echo "   Translating ${filename} ... "
 
-    if [ -z "$files" ]; then
-        echo "   [WARN] No .cpp files found in $src_dir"
-        continue
+    # Run the transcompiler with PYTHONPATH set so benchmark/ is importable
+    if PYTHONPATH="${SCRIPT_DIR}" python3 "$TRANSLATOR_PY" \
+        --source "$src_plat" \
+        --target "$dst_plat" \
+        --file_name "$src_file" \
+        --max_depth 2 \
+        --num_simulations 4 > /tmp/falcon_trans.log 2>&1; then
+
+        echo "   ✅ Success"
+    else
+        echo "   ❌ Failed"
+        echo "--- Error Log (Last 20 lines) ---"
+        tail -n 20 /tmp/falcon_trans.log
+        echo "---------------------------------"
     fi
-
-    i=0
-    file_arr=($files)
-    total=${#file_arr[@]}
-
-    for src_file in $files; do
-        ((i+=1))
-        filename=$(basename "$src_file")
-
-        printf "   [%3d/%3d] Translating %-30s ... " "$i" "$total" "$filename"
-
-        # Run the transcompiler with PYTHONPATH set so benchmark/ is importable
-        if PYTHONPATH="${SCRIPT_DIR}" python3 "$TRANSLATOR_PY" \
-            --source "$src_plat" \
-            --target "$dst_plat" \
-            --file_name "$src_file" \
-            --max_depth 2 \
-            --num_simulations 4 > /tmp/falcon_trans.log 2>&1; then
-
-            echo "✅ Success"
-        else
-            echo "❌ Failed"
-            echo "--- Error Log (Last 20 lines) ---"
-            tail -n 20 /tmp/falcon_trans.log
-            echo "---------------------------------"
-        fi
-    done
     printf "\n"
 done
+
 echo "=== All Done ==="
