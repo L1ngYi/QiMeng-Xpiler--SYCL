@@ -168,6 +168,13 @@ def remove_target_prefix(code, target=None):
         (r"__global__\s+", ""),  # Remove `__global__`.
         (r"__launch_bounds__\(\d+\)\s+", ""),  # Remove `__launch_bounds__`.
         (r"\b__restrict__\b", ""),  # Remove `__restrict__`.
+
+        # ==========================================
+        # 【新增】：屏蔽 SYCL 头文件和命名空间，防止预处理器崩溃
+        (r"#\s*include\s*<sycl/sycl\.hpp>.*?\n", ""),
+        (r"using\s+namespace\s+sycl\s*;.*?\n", ""),
+        # ==========================================
+
         (r"//.*?\n|/\*.*?\*/", "", re.S),  # Remove all C/C++ comments.
         (r"\bthreadIdxx\b", "threadIdxx"),  # Change to underscore style.
         (r"\bthreadIdxy\b", "threadIdxy"),
@@ -258,6 +265,8 @@ def get_target(code, target=None):
     # 启发式检测：CUDA
     elif "__global__" in code or "threadIdx.x" in code or "wmma" in code:
         target, file_type = "cuda", ".cu"
+    elif "sycl::" in code or "<sycl/sycl.hpp>" in code or "q.submit" in code:
+        target, file_type = "sycl", ".cpp"
     else:
         target, file_type = "cpu", ".cpp"
     return target, file_type

@@ -175,17 +175,35 @@ FPGAs) using the SYCL 2020 programming model.
 2. Add a ``sycl::queue &q`` parameter to the function signature.
 3. For each parallelisable outermost for-loop:
    a. Determine the loop variable (e.g. ``i``) and its upper bound (e.g. ``size``).
-   b. Replace the loop with:
-      ```
+   b. For a single parallelisable loop, replace with:
+```
       q.submit([&](handler &h) {
         h.parallel_for(range<1>(size), [=](item<1> item) {
-          int i = item.get_global_id(0);
+          int i = item.get_id(0);
           <original loop body>
         });
       });
       q.wait();
-      ```
+```
+   c. For two nested parallelisable loops (bounds M and N), collapse into a 2D kernel:
+```
+      q.submit([&](handler &h) {
+        h.parallel_for(range<2>(M, N), [=](item<2> item) {
+          int i = item.get_id(0);
+          int j = item.get_id(1);
+          <original loop body (innermost sequential loops remain)>
+        });
+      });
+      q.wait();
+```
 4. Remove the ``extern "C"`` specifier if present.
+5. Use a local accumulator variable (e.g. ``float sum = 0.0f``) for reduction loops
+   instead of repeatedly writing to the output array inside the kernel.
+
+### SYCL API Reference:
+- Use ``item.get_id(dim)``  to get the thread index — this is correct for ``sycl::item<N>``.
+- Do NOT use ``item.get_global_id(dim)`` — that method belongs to ``sycl::nd_item<N>``
+  and will cause a compile error when used with a plain ``range`` kernel.
 
 ### Example
 {THREAD_BINDING_DEMO_SYCL}
@@ -201,7 +219,7 @@ Please transform the following C++ code by converting its parallel loops to SYCL
 """
 
 THREAD_BINDING_DEMO_SYCL = """
-Usage Example:
+Usage Example 1 — 1D loop:
 
 Input C++ Code:
 ```cpp
@@ -222,8 +240,42 @@ void add(float *input1, float *input2, float *output, sycl::queue &q) {
   int size = 64;
   q.submit([&](handler &h) {
     h.parallel_for(range<1>(size), [=](item<1> item) {
-      int i = item.get_global_id(0);
+      int i = item.get_id(0);   // correct: get_id() for sycl::item<N>
       output[i] = input1[i] + input2[i];
+    });
+  });
+  q.wait();
+}
+```
+Usage Example 2 — 2D nested loops with reduction:
+Input C++ Code:
+```cpp
+extern "C" void gemm(float *A, float *B, float *result) {
+  for (int j = 0; j < 32; j++) {
+    for (int k = 0; k < 128; k++) {
+      result[j * 128 + k] = 0;
+      for (int l = 0; l < 32; l++) {
+        result[j * 128 + k] += A[j * 32 + l] * B[l * 128 + k];
+      }
+    }
+  }
+}
+```
+Desired Output SYCL Code:
+```cpp
+#include <sycl/sycl.hpp>
+using namespace sycl;
+
+void gemm(float *A, float *B, float *result, sycl::queue &q) {
+  q.submit([&](handler &h) {
+    h.parallel_for(range<2>(32, 128), [=](item<2> item) {
+      int j = item.get_id(0);   // correct: get_id() for sycl::item<N>
+      int k = item.get_id(1);   // correct: get_id() for sycl::item<N>
+      float sum = 0.0f;         // local accumulator, not result[] directly
+      for (int l = 0; l < 32; l++) {
+        sum += A[j * 32 + l] * B[l * 128 + k];
+      }
+      result[j * 128 + k] = sum;
     });
   });
   q.wait();

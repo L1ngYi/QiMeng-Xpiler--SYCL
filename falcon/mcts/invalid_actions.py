@@ -45,7 +45,7 @@ def get_invalid_actions(code, source_platform, target_platform):
     #  4:loop_reorder, 5:loop_split, 6:loop_contraction, 7:auto_bind,
     #  8:auto_cache, 9:auto_tensorization, 10:auto_pipeline, 11:sycl_bind]
     invalid_mask = [0] * len(ActionSpace)
-
+    #print(f"[DEBUG-Platform] source_platform: '{source_platform}', target_platform: '{target_platform}'", flush=True)
     # ================= SYCL source: SYCL → CPU 逻辑 =================
     if source_platform == "sycl":
         # 简单的启发式检查：看代码里还有没有 SYCL 的特征关键字
@@ -66,7 +66,7 @@ def get_invalid_actions(code, source_platform, target_platform):
     # =================================================================
 
     # ================= CPU → SYCL 逻辑 (新增) ========================
-    if source_platform == "cpu" and target_platform == "sycl":
+    if target_platform == "sycl":
         is_raw_sycl = "parallel_for" in code or "q.submit" in code or "handler" in code
         if is_raw_sycl:
             invalid_mask = [1] * len(ActionSpace)  # 先全禁
