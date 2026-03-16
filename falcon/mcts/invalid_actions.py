@@ -67,24 +67,13 @@ def get_invalid_actions(code, source_platform, target_platform):
 
     # ================= CPU → SYCL 逻辑 (新增) ========================
     if source_platform == "cpu" and target_platform == "sycl":
-        # Source is already plain C++: no loop_recovery needed
-        invalid_mask[0] = 1   # loop_recovery — not needed for C++ source
-        # CUDA/HIP-specific actions are irrelevant
-        invalid_mask[7] = 1   # auto_bind (CUDA/HIP)
-        invalid_mask[8] = 1   # auto_cache
-        invalid_mask[9] = 1   # auto_tensorization
-        invalid_mask[10] = 1  # auto_pipeline
-
-        # Allow loop transforms (1,2,3,4,5,6) and sycl_bind (11)
-        # Disable sycl_bind once SYCL patterns are already present
-        if "parallel_for" in code or "q.submit" in code:
-            invalid_mask[11] = 1  # sycl_bind already applied
-
-        if not visit_func_call(code, source_platform):
-            invalid_mask[2] = 1
-        if not visit_compound_stmt(code, source_platform):
-            invalid_mask[1] = 1
-
+        is_raw_sycl = "parallel_for" in code or "q.submit" in code or "handler" in code
+        if is_raw_sycl:
+            invalid_mask = [1] * len(ActionSpace)  # 先全禁
+        else:
+            invalid_mask = [1] * len(ActionSpace)  # 先全禁
+            invalid_mask[11] = 0  # 只允许 sycl_bind       
+            
         return invalid_mask
     # =================================================================
 
