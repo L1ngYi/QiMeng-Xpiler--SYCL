@@ -72,7 +72,7 @@ def get_invalid_actions(code, source_platform, target_platform):
             invalid_mask = [1] * len(ActionSpace)  # 先全禁
         else:
             invalid_mask = [1] * len(ActionSpace)  # 先全禁
-            invalid_mask[11] = 0  # 只允许 sycl_bind       
+            invalid_mask[7] = 0  # 只允许 auto_bind 
             
         return invalid_mask
     # =================================================================
@@ -81,8 +81,6 @@ def get_invalid_actions(code, source_platform, target_platform):
 
     if source_platform == "cpu":
         invalid_mask[0] = 1
-        # sycl_bind is only valid when targeting SYCL
-        invalid_mask[11] = 1
 
     # 注意：如果代码是 SYCL，程序在上面就已经 return 了，不会执行到这里
     # 从而避免了 pycparser 解析 C++ 报错的问题
@@ -96,13 +94,12 @@ def get_invalid_actions(code, source_platform, target_platform):
         # GPU-specific actions are irrelevant when targeting CPU
         invalid_mask[7] = 1   # auto_bind
         invalid_mask[8] = 1   # auto_cache
-        invalid_mask[11] = 1  # sycl_bind
         if len(invalid_mask) > 10:
             invalid_mask[10] = 1  # auto_pipeline
 
     if target_platform != "sycl":
         # sycl_bind only makes sense when targeting SYCL
-        invalid_mask[11] = 1
+        invalid_mask[10] = 1
 
     if (
         "coreId" not in code

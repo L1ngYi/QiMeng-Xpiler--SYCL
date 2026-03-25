@@ -9,9 +9,7 @@ from falcon.smt.loop_transformation.loop_contraction import (
 from falcon.smt.loop_transformation.loop_fusion import ast_loop_fusion
 from falcon.smt.loop_transformation.loop_recovery import ast_loop_recovery
 
-from falcon.smt.loop_transformation.sycl_loop_recovery import (
-    ast_sycl_loop_recovery,
-)
+
 
 from falcon.smt.loop_transformation.loop_reorder import ast_loop_reorder
 from falcon.smt.loop_transformation.loop_split import ast_loop_split
@@ -19,7 +17,6 @@ from falcon.smt.software_pipeline import smt_double_buffer
 from falcon.smt.stmt_split import ast_stmt_split
 from falcon.smt.tensorization.detensorization import ast_detensorization
 from falcon.smt.tensorization.tensorization import ast_tensorization
-from falcon.smt.sycl_thread_binding import ast_sycl_thread_binding
 from falcon.smt.thread_binding import ast_thread_binding
 
 # 导入基于 LLM（大模型）的转换实现，作为优先方案
@@ -63,12 +60,7 @@ def loop_recovery(file_name, code, source_platform, target_platform):
         print(f"[Info] LLM failed ({e}), falling back to AST rule-based recovery...")
         
         # LLM 失败或校验不通过，回退到 AST 规则恢复 (基于编译器/规则)
-        if source_platform == "sycl":
-            # [新增] 接入 SYCL 的 AST 处理入口
-            final_code = ast_sycl_loop_recovery(code)
-        else:
-            # 原有的 CUDA/HIP 处理入口
-            final_code = ast_loop_recovery(code, source_platform)
+        final_code = ast_loop_recovery(code, source_platform)
             
     return final_code
 
@@ -174,7 +166,8 @@ def auto_bind(file_name, code, source_platform, target_platform):
             if not unit_test(file_name, final_code)[0]:
                 raise RuntimeError("auto_bind sycl error")
         except Exception:
-            final_code = ast_sycl_thread_binding(code)
+            #final_code = ast_sycl_thread_binding(code)
+            final_code = ast_thread_binding(code, target_platform)
         return final_code
     try:
         final_code = run_thread_binding(code, target_platform)
@@ -184,22 +177,6 @@ def auto_bind(file_name, code, source_platform, target_platform):
         final_code = ast_thread_binding(code, target_platform)
     return final_code
 
-
-def sycl_bind(file_name, code, source_platform, target_platform):
-    """
-    动作：SYCL 线程绑定
-    功能：将串行 C++ for 循环转换为 SYCL parallel_for / q.submit 模式。
-    仅适用于 target_platform == "sycl"。
-    """
-    if target_platform != "sycl":
-        return code
-    try:
-        final_code = run_thread_binding(code, target_platform)
-        if not unit_test(file_name, final_code)[0]:
-            raise RuntimeError("sycl_bind error")
-    except Exception:
-        final_code = ast_sycl_thread_binding(code)
-    return final_code
 
 
 def auto_cache(file_name, code, source_platform, target_platform):
@@ -261,7 +238,6 @@ actions = [
     auto_cache,
     auto_tensorization,
     auto_pipeline,
-    sycl_bind,
 ]
 
 if __name__ == "__main__":
