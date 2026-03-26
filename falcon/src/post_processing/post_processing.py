@@ -17,6 +17,335 @@ from falcon.src.post_processing.post_processing_prompt import (
 from falcon.src.prompt.prompt import SYSTEM_PROMPT
 from falcon.util import extract_code, make_full_func
 
+
+def _extract_pragma_payloads(code, pragma_name):
+    payloads = []
+    prefix = f"#pragma {pragma_name}("
+    for line in code.splitlines():
+        stripped = line.strip()
+        if not stripped.startswith(prefix):
+            continue
+        end_idx = stripped.rfind(")")
+        if end_idx <= len(prefix) - 1:
+            continue
+        payloads.append(stripped[len(prefix):end_idx].strip())
+    return payloads
+
+
+def _split_csv(text):
+    return [item.strip() for item in text.split(",") if item.strip()]
+
+
+def _split_parameters(param_text):
+    parts = []
+    current = []
+    angle_depth = 0
+    paren_depth = 0
+    bracket_depth = 0
+
+    for ch in param_text:
+        if ch == "<":
+            angle_depth += 1
+        elif ch == ">" and angle_depth > 0:
+            angle_depth -= 1
+        elif ch == "(":
+            paren_depth += 1
+        elif ch == ")" and paren_depth > 0:
+            paren_depth -= 1
+        elif ch == "[":
+            bracket_depth += 1
+        elif ch == "]" and bracket_depth > 0:
+            bracket_depth -= 1
+
+        if (
+            ch == ","
+            and angle_depth == 0
+            and paren_depth == 0
+            and bracket_depth == 0
+        ):
+            part = "".join(current).strip()
+            if part:
+                parts.append(part)
+            current = []
+            continue
+
+        current.append(ch)
+
+    tail = "".join(current).strip()
+    if tail:
+        parts.append(tail)
+    return parts
+
+
+def _parse_sycl_signature(code):
+    signature_source = re.sub(r"//.*?$|/\*.*?\*/", "", code, flags=re.M | re.S)
+    match = re.search(
+        r'(?P<extern>extern\s+"C"\s+)?'
+        r"(?P<ret>[A-Za-z_][\w:\s<>\*&]*?)\s+"
+        r"(?P<name>\w+)\s*\((?P<params>.*?)\)\s*{",
+        signature_source,
+        re.S,
+    )
+    if match is None:
+        return None
+
+    params = _split_parameters(match.group("params"))
+    param_types = {}
+    scalar_params = []
+    queue_name = None
+    for param in params:
+        name_match = re.search(r"([A-Za-z_]\w*)\s*$", param)
+        if name_match is None:
+            continue
+        param_name = name_match.group(1)
+        param_type = param[: name_match.start(1)].strip()
+        param_types[param_name] = param_type
+        if "queue" in param_type:
+            queue_name = param_name
+            continue
+        if "*" not in param and "&" not in param:
+            scalar_params.append(param_name)
+
+    alias_lines = re.findall(
+        r"^\s*(using\s+\w+\s*=\s*sycl::[A-Za-z_:<>]+\s*;)\s*$",
+        code,
+        re.M,
+    )
+
+    signature_prefix = (
+        f'{match.group("extern") or ""}{match.group("ret").strip()}'
+    ).strip()
+    return {
+        "signature_prefix": signature_prefix,
+        "func_name": match.group("name"),
+        "params": params,
+        "param_types": param_types,
+        "scalar_params": scalar_params,
+        "queue_name": queue_name,
+        "alias_lines": alias_lines,
+    }
+
+
+def _pointee_type(param_type):
+    base = param_type.replace("*", " ").replace("&", " ")
+    base = re.sub(r"\bconst\b", "", base)
+    base = re.sub(r"\s+", " ", base).strip()
+    return base or "float"
+
+
+def _detect_sycl_matmul_kernel(code):
+    if "parallel_for" not in code or "sum" not in code:
+        return None
+
+    signature = _parse_sycl_signature(code)
+    if signature is None or signature["queue_name"] is None:
+        return None
+
+    row_match = re.search(
+        r"int\s+(?P<row>\w+)\s*=\s*item\.get_(?:global_)?id\(\s*0\s*\)\s*;",
+        code,
+    )
+    col_match = re.search(
+        r"int\s+(?P<col>\w+)\s*=\s*item\.get_(?:global_)?id\(\s*1\s*\)\s*;",
+        code,
+    )
+    if row_match is None or col_match is None:
+        return None
+
+    reduction_match = re.search(
+        r"float\s+sum\s*=\s*0(?:\.0f?)?\s*;\s*"
+        r"for\s*\(\s*int\s+(?P<red>\w+)\s*=\s*0\s*;\s*(?P=red)\s*<\s*(?P<kexpr>[^;]+?)\s*;\s*\+\+(?P=red)\s*\)\s*"
+        r"{(?P<body>.*?)}\s*"
+        r"(?P<output>\w+)\s*\[(?P<out_index>[^\]]+)\]\s*=\s*sum\s*;",
+        code,
+        re.S,
+    )
+    if reduction_match is None:
+        return None
+
+    loop_body = reduction_match.group("body")
+    output_name = reduction_match.group("output")
+    array_refs = re.findall(r"([A-Za-z_]\w*)\s*\[([^\]]+)\]", loop_body)
+    input_names = []
+    for array_name, _ in array_refs:
+        if array_name == output_name or array_name in input_names:
+            continue
+        input_names.append(array_name)
+        if len(input_names) == 2:
+            break
+    if len(input_names) != 2:
+        return None
+
+    dim_names = signature["scalar_params"]
+    m_expr = dim_names[0] if len(dim_names) > 0 else None
+    k_expr = reduction_match.group("kexpr").strip()
+    n_expr = dim_names[2] if len(dim_names) > 2 else None
+
+    cond_match = re.search(
+        rf"if\s*\(\s*{row_match.group('row')}\s*<\s*(?P<m>[^&|)]+?)\s*&&\s*"
+        rf"{col_match.group('col')}\s*<\s*(?P<n>[^&|)]+?)\s*\)",
+        code,
+    )
+    if cond_match is not None:
+        m_expr = cond_match.group("m").strip()
+        n_expr = cond_match.group("n").strip()
+    elif len(dim_names) >= 3:
+        m_expr = dim_names[0]
+        n_expr = dim_names[2]
+
+    if m_expr is None or n_expr is None:
+        range_match = re.search(
+            r"parallel_for\s*\(\s*range<2>\s*\(\s*([^,]+)\s*,\s*([^)]+)\)",
+            code,
+        )
+        if range_match is not None:
+            m_expr = m_expr or range_match.group(1).strip()
+            n_expr = n_expr or range_match.group(2).strip()
+
+    if m_expr is None or n_expr is None:
+        return None
+
+    a_name, b_name = input_names
+    param_types = signature["param_types"]
+    if a_name not in param_types or b_name not in param_types:
+        return None
+    if output_name not in param_types:
+        return None
+
+    return {
+        **signature,
+        "row_var": row_match.group("row"),
+        "col_var": col_match.group("col"),
+        "red_var": reduction_match.group("red"),
+        "m_expr": m_expr,
+        "k_expr": k_expr,
+        "n_expr": n_expr,
+        "a_name": a_name,
+        "b_name": b_name,
+        "c_name": output_name,
+        "a_elem_type": _pointee_type(param_types[a_name]),
+        "b_elem_type": _pointee_type(param_types[b_name]),
+        "c_elem_type": _pointee_type(param_types[output_name]),
+    }
+
+
+def _generate_sycl_tiled_matmul(info, use_fma=False):
+    subgroup_attr = " [[sycl::reqd_sub_group_size(16)]]" if use_fma else ""
+    inner_update = (
+        "          sum = sycl::mad(\n"
+        "              static_cast<float>(A_tile[local_row][kk]),\n"
+        "              static_cast<float>(B_tile[kk][local_col]),\n"
+        "              sum);\n"
+        if use_fma
+        else "          sum += static_cast<float>(A_tile[local_row][kk]) *\n"
+        "                 static_cast<float>(B_tile[kk][local_col]);\n"
+    )
+    alias_block = ""
+    if info["alias_lines"]:
+        alias_block = "\n".join(info["alias_lines"]) + "\n\n"
+
+    params_text = ", ".join(info["params"])
+    return (
+        f"{alias_block}"
+        f"{info['signature_prefix']} {info['func_name']}({params_text}) {{\n"
+        f"  constexpr int TILE_M = 16;\n"
+        f"  constexpr int TILE_N = 16;\n"
+        f"  constexpr int TILE_K = 16;\n"
+        f"  range<2> global_size(\n"
+        f"      (({info['m_expr']}) + TILE_M - 1) / TILE_M * TILE_M,\n"
+        f"      (({info['n_expr']}) + TILE_N - 1) / TILE_N * TILE_N);\n"
+        f"  range<2> local_size(TILE_M, TILE_N);\n\n"
+        f"  {info['queue_name']}.submit([&](handler &h) {{\n"
+        f"    local_accessor<{info['a_elem_type']}, 2> A_tile(\n"
+        f"        range<2>(TILE_M, TILE_K), h);\n"
+        f"    local_accessor<{info['b_elem_type']}, 2> B_tile(\n"
+        f"        range<2>(TILE_K, TILE_N), h);\n"
+        f"    h.parallel_for(\n"
+        f"        nd_range<2>(global_size, local_size),\n"
+        f"        [=](nd_item<2> item){subgroup_attr} {{\n"
+        f"          int {info['row_var']} = item.get_global_id(0);\n"
+        f"          int {info['col_var']} = item.get_global_id(1);\n"
+        f"          int local_row = item.get_local_id(0);\n"
+        f"          int local_col = item.get_local_id(1);\n"
+        f"          float sum = 0.0f;\n\n"
+        f"          for (int tile_k = 0; tile_k < {info['k_expr']}; tile_k += TILE_K) {{\n"
+        f"            int a_col = tile_k + local_col;\n"
+        f"            int b_row = tile_k + local_row;\n"
+        f"            A_tile[local_row][local_col] =\n"
+        f"                ({info['row_var']} < {info['m_expr']} && a_col < {info['k_expr']})\n"
+        f"                    ? {info['a_name']}[{info['row_var']} * {info['k_expr']} + a_col]\n"
+        f"                    : ({info['a_elem_type']})0;\n"
+        f"            B_tile[local_row][local_col] =\n"
+        f"                (b_row < {info['k_expr']} && {info['col_var']} < {info['n_expr']})\n"
+        f"                    ? {info['b_name']}[b_row * {info['n_expr']} + {info['col_var']}]\n"
+        f"                    : ({info['b_elem_type']})0;\n"
+        f"            item.barrier(access::fence_space::local_space);\n\n"
+        f"#pragma unroll\n"
+        f"            for (int kk = 0; kk < TILE_K; ++kk) {{\n"
+        f"{inner_update}"
+        f"            }}\n"
+        f"            item.barrier(access::fence_space::local_space);\n"
+        f"          }}\n\n"
+        f"          if ({info['row_var']} < {info['m_expr']} && {info['col_var']} < {info['n_expr']}) {{\n"
+        f"            {info['c_name']}[{info['row_var']} * {info['n_expr']} + {info['col_var']}] = sum;\n"
+        f"          }}\n"
+        f"        }});\n"
+        f"  }});\n"
+        f"}}"
+    )
+
+
+def _promote_sycl_cached_matmul(code):
+    if "local_accessor<" not in code:
+        return code
+
+    updated = code
+    if "[[sycl::reqd_sub_group_size(16)]]" not in updated:
+        updated = re.sub(
+            r"(\[=\]\s*\(\s*nd_item<2>\s+\w+\s*\))\s*{",
+            r"\1 [[sycl::reqd_sub_group_size(16)]] {",
+            updated,
+            count=1,
+        )
+    updated = re.sub(
+        r"sum\s*\+=\s*static_cast<float>\(([^)]+)\)\s*\*\s*"
+        r"static_cast<float>\(([^)]+)\)\s*;",
+        (
+            "sum = sycl::mad(\n"
+            "              static_cast<float>(\\1),\n"
+            "              static_cast<float>(\\2),\n"
+            "              sum);"
+        ),
+        updated,
+    )
+    return updated
+
+
+def _run_sycl_cache_process(code, space_maps):
+    if "local_accessor<" in code:
+        return make_full_func(code, "sycl")
+
+    info = _detect_sycl_matmul_kernel(code)
+    if info is None:
+        return make_full_func(code, "sycl")
+
+    return make_full_func(_generate_sycl_tiled_matmul(info), "sycl")
+
+
+def _run_sycl_tensorization(code):
+    if "sycl::mad(" in code and "[[sycl::reqd_sub_group_size(16)]]" in code:
+        return make_full_func(code, "sycl")
+
+    promoted = _promote_sycl_cached_matmul(code)
+    if promoted != code:
+        return make_full_func(promoted, "sycl")
+
+    info = _detect_sycl_matmul_kernel(code)
+    if info is None:
+        return make_full_func(code, "sycl")
+
+    return make_full_func(_generate_sycl_tiled_matmul(info, use_fma=True), "sycl")
+
 def run_thread_binding(code, target):
     PROMPT = """
     {SYSTEM_PROMPT}
@@ -46,23 +375,18 @@ def run_thread_binding(code, target):
 
 
 def get_operation_content(code):
-    # Define the regex pattern to match the content inside parentheses
-    # following #pragma intrinsic
-    pattern = r"#pragma\s+operation\(([^)]+)\)"
-    # Find all matches in the given code (there might be multiple pragmas)
-    matches = re.findall(pattern, code)
-    return matches
+    return _extract_pragma_payloads(code, "operation")
 
 
 def get_input_operand(pragma):
     inputs = pragma.split("input[")[1].split("]")[0]
-    input_list = inputs.split(", ")
+    input_list = _split_csv(inputs)
     return input_list
 
 
 def get_output_operand(pragma):
     outputs = pragma.split("output[")[1].split("]")[0]
-    output_list = outputs.split(", ")
+    output_list = _split_csv(outputs)
     return output_list
 
 
@@ -124,23 +448,18 @@ def replace_operation_with_intrinsic(code, op_pragma):
 
 
 def get_intrinsic_content(code):
-    # Define the regex pattern to match the content inside parentheses
-    # following #pragma intrinsic
-    pattern = r"#pragma\s+intrinsic\(([^)]+)\)"
-    # Find all matches in the given code (there might be multiple pragmas)
-    matches = re.findall(pattern, code)
-    return matches
+    return _extract_pragma_payloads(code, "intrinsic")
 
 
 def get_input_memory_spaces(pragma):
     inputs = pragma.split("input[")[1].split("]")[0]
-    input_list = inputs.split(", ")
+    input_list = _split_csv(inputs)
     return input_list
 
 
 def get_output_memory_spaces(pragma):
     outputs = pragma.split("output[")[1].split("]")[0]
-    output_list = outputs.split(", ")
+    output_list = _split_csv(outputs)
     return output_list
 
 
@@ -184,6 +503,9 @@ def generate_cache_write_prompt(buffer, space, code):
 
 
 def run_cache_process(code, space_maps, target):
+    if target == "sycl":
+        return _run_sycl_cache_process(code, space_maps)
+
     # Get the list of intrinsics from the code
     intrinsic_list = get_intrinsic_content(code)
     # Ensure the intrinsic lists and spaces have matching lengths
@@ -229,16 +551,16 @@ def tensorization(op, code, document):
 
 
 def get_operation_words(pragma_line):
-    # Modify the pattern to capture everything inside parentheses, allowing
-    # spaces and underscores
-    pattern = r"#pragma\s+operation\((\w+)"
-    # Find all matches in the given string
-    matches = re.findall(pattern, pragma_line)
-    # Return the list of matches (it will be empty if no matches are found)
-    return matches
+    return [
+        operation.split("(", 1)[0].strip()
+        for operation in get_operation_content(pragma_line)
+    ]
 
 
 def run_tensorization(code, target):
+    if target == "sycl":
+        return _run_sycl_tensorization(code)
+
     op_list = get_operation_words(code)
     if target in ["cuda", "hip"]:
         if "matmul" not in op_list:
@@ -249,7 +571,8 @@ def run_tensorization(code, target):
 def run_code_decoration(code):
     PROMPT = DECORATION_PROMPT.replace("{cpp_code}", code)
     content = invoke_llm(PROMPT)
-    return extract_code(content)
+    decorated_code = extract_code(content)
+    return decorated_code if decorated_code else code
 
 
 def double_buffer(code):

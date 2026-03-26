@@ -70,6 +70,8 @@ def get_invalid_actions(code, source_platform, target_platform):
         is_raw_sycl = "parallel_for" in code or "q.submit" in code or "handler" in code
         if is_raw_sycl:
             invalid_mask = [1] * len(ActionSpace)  # 先全禁
+            invalid_mask[8] = 0  # auto_cache
+            invalid_mask[9] = 0  # auto_tensorization
         else:
             invalid_mask = [1] * len(ActionSpace)  # 先全禁
             invalid_mask[7] = 0  # 只允许 auto_bind 

@@ -66,11 +66,15 @@ def auto_bind(file_name, code, source_platform, target_platform):
 
 
 def auto_cache(file_name, code, source_platform, target_platform):
-    code = run_code_decoration(code)
+    try:
+        code = run_code_decoration(code)
+    except Exception:
+        if target_platform != "sycl":
+            raise
     op_pragma = {}
     code, space_maps = replace_operation_with_intrinsic(code, op_pragma)
     # If no need to cache, just return origin code
-    if space_maps is None:
+    if space_maps is None and target_platform != "sycl":
         return code
 
     cache_code = run_cache_process(code, space_maps, target_platform)
@@ -78,7 +82,11 @@ def auto_cache(file_name, code, source_platform, target_platform):
 
 
 def auto_tensorization(file_name, code, source_platform, target_platform):
-    code = run_code_decoration(code)
+    try:
+        code = run_code_decoration(code)
+    except Exception:
+        if target_platform != "sycl":
+            raise
     final_code = run_tensorization(code, target_platform)
     return final_code
 

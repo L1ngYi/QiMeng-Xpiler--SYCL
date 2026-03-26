@@ -185,19 +185,29 @@ def auto_cache(file_name, code, source_platform, target_platform):
     功能：识别数据访问模式，将全局内存数据预取到 Shared Memory 或 Local Memory。
     """
     # 先进行常量内联和代码装饰预处理
-    code = constant_inline(code)
-    code = run_code_decoration(code)
+    if target_platform != "sycl":
+        code = constant_inline(code)
+
+    try:
+        code = run_code_decoration(code)
+    except Exception:
+        if target_platform != "sycl":
+            raise
+
     op_pragma = {}
     # 将标准操作替换为 intrinsic 形式，并分析内存空间映射
     code, space_maps = replace_operation_with_intrinsic(code, op_pragma)
     # If no need to cache, just return origin code
-    if space_maps is None:
+    if space_maps is None and target_platform != "sycl":
         return code
     try:
         cache_code = run_cache_process(code, space_maps, target_platform)
-        if not unit_test(file_name, cache_code):
+        if not unit_test(file_name, cache_code)[0]:
             raise RuntimeError("auto_cache error")
-    except Exception:
+    except Exception as e:
+        if target_platform == "sycl":
+            print(f"[Warn] LLM SYCL Cache failed: {e}. Returning original code.")
+            return code
         cache_code = ast_auto_cache(code, space_maps)
     return cache_code
 
@@ -209,10 +219,18 @@ def auto_tensorization(file_name, code, source_platform, target_platform):
     """
     try:
         code = run_code_decoration(code)
+    except Exception:
+        if target_platform != "sycl":
+            raise
+
+    try:
         final_code = run_tensorization(code, target_platform)
         if not unit_test(file_name, final_code)[0]:
             raise RuntimeError("auto_tensorization error")
-    except Exception:
+    except Exception as e:
+        if target_platform == "sycl":
+            print(f"[Warn] LLM SYCL Tensorization failed: {e}. Returning original code.")
+            return code
         final_code = ast_tensorization(code, target_platform)
     return final_code
 
