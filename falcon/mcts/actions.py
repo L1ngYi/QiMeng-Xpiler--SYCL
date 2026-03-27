@@ -55,10 +55,11 @@ def loop_recovery(file_name, code, source_platform, target_platform):
     """
     try:
         final_code = run_loop_recovery(code, source_platform)
+        print(f"[Info] LLM loop_recovery result: {final_code}")
         if not unit_test(file_name, final_code)[0]:
             raise RuntimeError("loop recovery error (LLM check failed)")
     except Exception as e:
-        print(f"[Info] LLM failed ({e}), falling back to AST rule-based recovery...")
+        print(f"[Info] LLM loop_recovery failed ({e}), generate code is {final_code}, falling back to AST rule-based recovery...")
         if target_platform == "sycl":
             final_code = ast_sycl_loop_recovery(code, source_platform)
         else:
@@ -164,13 +165,16 @@ def auto_bind(file_name, code, source_platform, target_platform):
     
     try:
         final_code = run_thread_binding(code, target_platform)
+        print(f"[Info] LLM auto_bind result: {final_code}")
         if not unit_test(file_name, final_code)[0]:
             raise RuntimeError("auto_bind error")
-    except Exception:
+    except Exception as e:
+        print(f"[Info] LLM auto_bind failed ({e}), generate code is {final_code}, falling back to AST rule-based recovery...")
         if target_platform == "sycl":
             final_code = ast_sycl_thread_binding(code)
         else:
             final_code = ast_thread_binding(code, target_platform)
+        print(f"[Info] AST-based auto_bind result: {final_code}")
     return final_code
 
 
@@ -185,7 +189,7 @@ def auto_cache(file_name, code, source_platform, target_platform):
 
     try:
         code = run_code_decoration(code)
-    except Exception:
+    except Exception as e:
         if target_platform != "sycl":
             raise
 
@@ -200,9 +204,11 @@ def auto_cache(file_name, code, source_platform, target_platform):
             cache_code = _run_sycl_cache_process(code, space_maps, target_platform)
         else:
             cache_code = run_cache_process(code, space_maps, target_platform)
+        print(f"[Info] LLM auto_cache result: {cache_code}")
         if not unit_test(file_name, cache_code)[0]:
             raise RuntimeError("auto_cache error")
     except Exception as e:
+        print(f"[Info] LLM auto_cache failed ({e}), generate code is {cache_code}, falling back to AST rule-based recovery...")
         if target_platform == "sycl":
             print(f"[Warn] LLM SYCL Cache failed: {e}. Returning original code.")
             return code
@@ -226,9 +232,11 @@ def auto_tensorization(file_name, code, source_platform, target_platform):
             final_code = _run_sycl_tensorization(code, target_platform)
         else:
             final_code = run_tensorization(code, target_platform)
+        print(f"[Info] LLM auto_tensorization result: {final_code}")
         if not unit_test(file_name, final_code)[0]:
             raise RuntimeError("auto_tensorization error")
     except Exception as e:
+        print(f"[Info] LLM auto_tensorization failed ({e}), generate code is {final_code}, falling back to AST rule-based recovery...")
         if target_platform == "sycl":
             print(f"[Warn] LLM SYCL Tensorization failed: {e}. Returning original code.")
             return code
