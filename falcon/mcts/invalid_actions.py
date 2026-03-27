@@ -48,8 +48,10 @@ def get_invalid_actions(code, source_platform, target_platform):
         if source_platform == "sycl":
             if target_platform == "sycl":
                 # SYCL->SYCL 只允许 auto_cache 和 auto_tensorization
-                invalid_mask[9] = 0  # auto_tensorization 自动张量化
-                invalid_mask[8] = 0  # auto_cache 自动缓存
+             if "local_accessor" not in code:
+                invalid_mask[8] = 0  # 允许 Cache
+            if "sycl::mad" not in code and "reqd_sub_group_size" not in code and "joint_matrix" not in code:
+                invalid_mask[9] = 0  # 允许 Tensorize
                 return invalid_mask 
             if is_raw_sycl:
                 invalid_mask[0] = 0  # loop recovery 循环降维

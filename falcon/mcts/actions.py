@@ -15,6 +15,8 @@ from falcon.smt.loop_transformation.loop_reorder import ast_loop_reorder
 from falcon.smt.loop_transformation.loop_split import ast_loop_split
 from falcon.smt.software_pipeline import smt_double_buffer
 from falcon.smt.stmt_split import ast_stmt_split
+from falcon.smt.sycl_auto_cache import ast_sycl_auto_cache
+from falcon.smt.sycl_tensorization import ast_sycl_tensorization
 from falcon.smt.tensorization.detensorization import ast_detensorization
 from falcon.smt.tensorization.tensorization import ast_tensorization
 from falcon.smt.thread_binding import ast_thread_binding
@@ -209,9 +211,13 @@ def auto_cache(file_name, code, source_platform, target_platform):
     except Exception as e:
         print(f"[Info] LLM auto_cache failed ({e}), generate code is {cache_code}, falling back to AST rule-based recovery...")
         if target_platform == "sycl":
-            print(f"[Warn] LLM SYCL Cache failed: {e}. Returning original code.")
-            return code
-        cache_code = ast_auto_cache(code, space_maps)
+            try:
+                cache_code = ast_sycl_auto_cache(code)
+            except Exception as ast_e:
+                print(f"[Warn] AST SYCL Cache failed: {ast_e}. Returning original code.")
+                return code
+        else:
+            cache_code = ast_auto_cache(code, space_maps)
     return cache_code
 
 
@@ -237,9 +243,13 @@ def auto_tensorization(file_name, code, source_platform, target_platform):
     except Exception as e:
         print(f"[Info] LLM auto_tensorization failed ({e}), generate code is {final_code}, falling back to AST rule-based recovery...")
         if target_platform == "sycl":
-            print(f"[Warn] LLM SYCL Tensorization failed: {e}. Returning original code.")
-            return code
-        final_code = ast_tensorization(code, target_platform)
+            try:
+                final_code = ast_sycl_tensorization(code)
+            except Exception as ast_e:
+                print(f"[Warn] AST SYCL Tensorization failed: {ast_e}. Returning original code.")
+                return code
+        else:
+            final_code = ast_tensorization(code, target_platform)
     return final_code
 
 

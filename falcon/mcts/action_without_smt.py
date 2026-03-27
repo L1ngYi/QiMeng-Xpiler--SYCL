@@ -10,6 +10,7 @@ from falcon.src.loop_transformation.loop_transformation import (
     run_stmt_split,
 )
 from falcon.src.post_processing.post_processing import (
+    _run_sycl_tensorization,
     replace_operation_with_intrinsic,
     run_cache_process,
     run_code_decoration,
@@ -87,7 +88,10 @@ def auto_tensorization(file_name, code, source_platform, target_platform):
     except Exception:
         if target_platform != "sycl":
             raise
-    final_code = run_tensorization(code, target_platform)
+    if target_platform == "sycl":
+        final_code = _run_sycl_tensorization(code, target_platform)
+    else:
+        final_code = run_tensorization(code, target_platform)
     return final_code
 
 

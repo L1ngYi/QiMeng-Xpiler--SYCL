@@ -59,6 +59,67 @@ Additionally, existing cache reads should not be removed.
 """
 
 
+SYCL_CACHE_PROMPT = """
+SYCL Local Memory Cache Optimization
+
+The input code is SYCL kernel code that has already been annotated by the LLM with
+`#pragma operation(...)` directives. Use these pragma annotations as the source of truth.
+
+### Goal:
+- Only transform kernels or loop regions marked with
+  `#pragma operation(matmul(input[...], output[...]))`.
+- Convert the marked matrix multiplication to a tiled SYCL implementation that uses
+  `local_accessor` to cache the two input buffers in fast local memory.
+
+### Requirements:
+1. Preserve the original function signature, function name, and computation semantics.
+2. Preserve unrelated code and unrelated pragmas.
+3. If the original kernel uses `range<2>` / `item<2>`, you may rewrite it into
+   `nd_range<2>` / `nd_item<2>` so that local memory barriers are legal.
+4. When using `nd_item<2>`, use `item.get_global_id(dim)` and
+   `item.get_local_id(dim)`.
+5. Keep the marked `#pragma operation(matmul(...))` line in the output if possible.
+6. If the code is already using `local_accessor`, return the code unchanged.
+7. Return only the full SYCL function code, without explanations.
+
+### Focus Pragmas:
+{SYCL_CACHE_PRAGMAS}
+
+### Input SYCL Code:
+{SYCL_CACHE_CODE}
+"""
+
+
+SYCL_TENSORIZATION_PROMPT = """
+SYCL Tensorization Optimization
+
+The input code is SYCL kernel code that has already been annotated by the LLM with
+`#pragma operation(...)` directives. Use these pragma annotations as the source of truth.
+
+### Goal:
+- Only transform kernels or loop regions marked with
+  `#pragma operation(matmul(input[...], output[...]))`.
+- Tensorize the marked matrix multiplication for SYCL by producing a fast tiled kernel.
+- Prefer code that uses `local_accessor`, `nd_range<2>`, `nd_item<2>`,
+  `[[sycl::reqd_sub_group_size(16)]]`, and `sycl::mad(...)` in the reduction.
+
+### Requirements:
+1. Preserve the original function signature, function name, arguments, and overall semantics.
+2. Preserve unrelated code and unrelated pragmas.
+3. If the code already uses `local_accessor`, keep that cache structure and upgrade the math path.
+4. If the code does not yet use `local_accessor`, you may introduce tiled local-memory caching.
+5. Keep the marked `#pragma operation(matmul(...))` line in the output if possible.
+6. When using `nd_item<2>`, use `item.get_global_id(dim)` and `item.get_local_id(dim)`.
+7. Return only the full SYCL function code, without explanations.
+
+### Focus Pragmas:
+{SYCL_TENSORIZATION_PRAGMAS}
+
+### Input SYCL Code:
+{SYCL_TENSORIZATION_CODE}
+"""
+
+
 TENSORIZATION_PROMPT = """
 Tensorization
 
