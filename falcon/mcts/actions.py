@@ -32,16 +32,15 @@ from falcon.src.loop_transformation.loop_transformation import (
 from falcon.src.post_processing.post_processing import (
     replace_operation_with_intrinsic,
     run_cache_process,
+    _run_sycl_tensorization,
     _run_sycl_cache_process,
     run_code_decoration,
     run_double_buffer,
     run_tensorization,
     run_thread_binding,
-    _run_sycl_tensorization,
 )
 from falcon.src.pre_processing.preprocessing import (
     run_detensorization,
-    _run_sycl_tensorization,
     run_loop_recovery,
 )
 from falcon.unit_test import unit_test
