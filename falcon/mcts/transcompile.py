@@ -62,6 +62,17 @@ jax.config.update("jax_disable_jit", True)
 jax.config.update("jax_enable_x64", True)  # 启用 64 位精度
 jax.disable_jit()  # 再次显式禁用 JIT
 BS = 1  # Batch Size (批大小)
+INVALID_LOGIT = -1e9
+
+
+def mask_invalid_prior_logits(prior_logits, invalid_mask):
+    """Suppress invalid actions by assigning them a very small logit."""
+    invalid_mask = invalid_mask.astype(bool)
+    return jnp.where(
+        invalid_mask,
+        jnp.full_like(prior_logits, INVALID_LOGIT),
+        prior_logits,
+    )
 
 
 def objective(file_name, target):
@@ -132,8 +143,35 @@ class FalconGo:
         )
         # Ensure the directory exists.
         os.makedirs(self.output_dir, exist_ok=True)
+        self.base_code = self._load_source_code()
+        self.code_cache = {(): self.base_code}
 
-    def perform_action(self, actions):
+    def _load_source_code(self):
+        code = open_file(self.file_name)
+        return (
+            code.split("extern")[0]
+            if self.source_platform in ["cuda", "hip"]
+            else code
+        )
+
+    def _apply_actions(self, action_ids):
+        code = self.base_code
+        for action_id in action_ids:
+            code = ActionSpace[action_id](
+                self.file_name,
+                code,
+                self.source_platform,
+                self.target_platform,
+            )
+        return code
+
+    def get_code_for_action_ids(self, action_ids):
+        key = tuple(action_ids)
+        if key not in self.code_cache:
+            self.code_cache[key] = self._apply_actions(action_ids)
+        return self.code_cache[key]
+
+    def perform_action(self, action_ids):
         """Applies a sequence of scheduling actions to the original code.
 
         This function:
@@ -146,29 +184,15 @@ class FalconGo:
         A score of 0 indicates compilation failure.
 
         Args:
-            actions: List of scheduling actions to apply sequentially
+            action_ids: List of scheduling action ids to apply sequentially
 
         Returns:
             tuple: (transformed_code, performance_score)
             - transformed_code (str): Source code after applying all actions
             - performance_score (float): Performance metric (0 if compilation fails)
         """
-        # 1. 读取原始代码
-        code = open_file(self.file_name)
-        # 如果是 GPU 平台，移除 extern 声明（特定于具体实现的清理逻辑）
-        code = (
-            code.split("extern")[0]
-            if self.source_platform in ["cuda", "hip"]
-            else code
-        )
-        # 2. 依次应用动作序列中的每一个变换
-        for action in actions:
-            code = action(
-                self.file_name,
-                code,
-                self.source_platform,
-                self.target_platform,
-            )
+        # 1-2. 从缓存或原始代码重放动作前缀，得到当前节点对应的代码
+        code = self.get_code_for_action_ids(action_ids)
         
         # 3. 准备编译和测试
         target, file_type = get_target(code, self.target_platform)
@@ -207,12 +231,10 @@ class FalconGo:
         )
         # 将 JAX 数组转换为 Python 列表，以便后续处理
         cur_action_list = jax.device_get(cur_action_ids.val[0]).tolist()
-        # 将动作 ID 映射回实际的函数对象
-        cur_actions = [ActionSpace[_i] for _i in cur_action_list]
 
         try:
             # 执行动作序列，获取转换后的代码和奖励
-            code, reward = self.perform_action(cur_actions)
+            code, reward = self.perform_action(cur_action_list)
             
             # 如果发现了更好的奖励，保存结果
             if reward > self.best_reward:
@@ -281,12 +303,7 @@ class FalconGo:
     @partial(jit, static_argnums=(0,))
     def reset(self, key):
         """重置环境状态"""
-        code = open_file(self.file_name)
-        code = (
-            code.split("extern")[0]
-            if self.source_platform in ["cuda", "hip"]
-            else code
-        )
+        code = self.base_code
         # 初始状态：原始代码的 Embedding
         embedding_state = jnp.array(encoder.encode(code))
         trajectory = jnp.zeros(self.optimizer_len, dtype=int)
@@ -343,11 +360,8 @@ def get_recurrent_fn(env):
         trajectory = trajectory.at[depth].set(actions)
         depth_val = int(jax.device_get(depth)[0])
         cur_action_ids = lax.dynamic_slice(trajectory, (0, 0), (1, depth_val))
-        jax.device_get(cur_action_ids)[0].tolist()
-
-        # 将 Embedding 解码回代码字符串，用于后续的有效性检查和先验计算
-        code_embedding = [int(arr) for arr in embedding_state[0]]
-        code = encoder.decode(code_embedding)
+        cur_action_list = jax.device_get(cur_action_ids)[0].tolist()
+        code = env.get_code_for_action_ids(cur_action_list)
         
         # 计算当前代码状态下的无效动作 Mask (防止搜索无效路径)
         invalid_mask = jnp.array(
@@ -364,6 +378,7 @@ def get_recurrent_fn(env):
                 code, env.source_platform, env.target_platform
             )
         ).reshape(1, -1)
+        prior_logits = mask_invalid_prior_logits(prior_logits, invalid_mask)
 
         # 返回 mctx 需要的 RecurrentFnOutput 对象
         return (
@@ -393,12 +408,7 @@ def _run_demo(env, rng_key):
     rng_key, logits_rng, q_rng, search_rng = jax.random.split(key, 4)
     
     # 获取初始代码并进行必要清理
-    code = open_file(env.file_name)
-    code = (
-        code.split("extern")[0]
-        if env.source_platform in ["cuda", "hip"]
-        else code
-    )
+    code = env.base_code
     # 计算初始状态的无效动作 Mask
     invalid_actions = jnp.array(
         get_invalid_actions(code, env.source_platform, env.target_platform)
@@ -409,6 +419,7 @@ def _run_demo(env, rng_key):
     prior_logits = jnp.array(
         generate_prior_from_src(code, env.source_platform, env.target_platform)
     ).reshape(1, -1)
+    prior_logits = mask_invalid_prior_logits(prior_logits, invalid_actions)
     
     # 定义搜索树的根节点
     root = mctx.RootFnOutput(

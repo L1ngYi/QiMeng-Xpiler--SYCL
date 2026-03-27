@@ -1,67 +1,20 @@
-
-# import os
-# import traceback
-# from openai import OpenAI
-
-# api_key = os.getenv("DEEPSEEK_API_KEY")
-# base_url = os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com")
-# model_name = os.getenv("DEEPSEEK_MODEL", "deepseek-chat")
-
-# if not api_key:
-#     raise ValueError(
-#         "Missing DEEPSEEK_API_KEY in environment."
-#     )
-
-# client = OpenAI(
-#     api_key=api_key,
-#     base_url=base_url,
-# )
-
-# def invoke_llm(prompt):
-#     try:
-#         response = client.chat.completions.create(
-#             messages=[
-#                 {
-#                     "role": "system",
-#                     "content": "You are a helpful assistant.",
-#                 },
-#                 {
-#                     "role": "user",
-#                     "content": prompt,
-#                 },
-#             ],
-#             max_tokens=4096, 
-#             temperature=1.0,
-#             top_p=1.0,
-#             model=model_name,
-#         )
-#         return response.choices[0].message.content
-#     except Exception as e:
-#         tb = traceback.format_exc()
-#         err_msg = f"invoke_llm error: {e}\nTraceback:\n{tb}"
-#         return err_msg
 import os
+import traceback
+from openai import OpenAI
 
-from openai import AzureOpenAI
+api_key = os.getenv("DEEPSEEK_API_KEY")
+base_url = os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com")
+model_name = os.getenv("DEEPSEEK_MODEL", "deepseek-chat")
 
-# 从环境变量获取配置
-endpoint = os.getenv("AZURE_OPENAI_ENDPOINT")
-api_key = os.getenv("AZURE_OPENAI_API_KEY") or os.getenv("OPENAI_API_KEY")
-api_version = os.getenv("AZURE_OPENAI_API_VERSION", "2025-04-01-preview")
-deployment = os.getenv("AZURE_OPENAI_DEPLOYMENT")
-
-if not endpoint or not api_key:
+if not api_key:
     raise ValueError(
-        "Missing AZURE_OPENAI_ENDPOINT or AZURE_OPENAI_API_KEY in environment."
+        "Missing DEEPSEEK_API_KEY in environment."
     )
 
-# 全局 client
-client = AzureOpenAI(
-    api_version=api_version,
+client = OpenAI(
     api_key=api_key,
-    azure_endpoint=endpoint,
+    base_url=base_url,
 )
-
 
 def invoke_llm(prompt):
     try:
@@ -76,17 +29,67 @@ def invoke_llm(prompt):
                     "content": prompt,
                 },
             ],
-            max_completion_tokens=4096,
+            max_tokens=4096, 
             temperature=1.0,
             top_p=1.0,
-            model=deployment,
+            model=model_name,
         )
         return response.choices[0].message.content
     except Exception as e:
-        # Import traceback here to avoid top-level import if not needed
-        import traceback
-
         tb = traceback.format_exc()
         err_msg = f"invoke_llm error: {e}\nTraceback:\n{tb}"
-        # Return the error message so callers can see what went wrong
         return err_msg
+
+
+
+
+# import os
+
+# from openai import AzureOpenAI
+
+# # 从环境变量获取配置
+# endpoint = os.getenv("AZURE_OPENAI_ENDPOINT")
+# api_key = os.getenv("AZURE_OPENAI_API_KEY") or os.getenv("OPENAI_API_KEY")
+# api_version = os.getenv("AZURE_OPENAI_API_VERSION", "2025-04-01-preview")
+# deployment = os.getenv("AZURE_OPENAI_DEPLOYMENT")
+
+# if not endpoint or not api_key:
+#     raise ValueError(
+#         "Missing AZURE_OPENAI_ENDPOINT or AZURE_OPENAI_API_KEY in environment."
+#     )
+
+# # 全局 client
+# client = AzureOpenAI(
+#     api_version=api_version,
+#     api_key=api_key,
+#     azure_endpoint=endpoint,
+# )
+
+
+# def invoke_llm(prompt):
+#     try:
+#         response = client.chat.completions.create(
+#             messages=[
+#                 {
+#                     "role": "system",
+#                     "content": "You are a helpful assistant.",
+#                 },
+#                 {
+#                     "role": "user",
+#                     "content": prompt,
+#                 },
+#             ],
+#             max_completion_tokens=4096,
+#             temperature=1.0,
+#             top_p=1.0,
+#             model=deployment,
+#         )
+#         return response.choices[0].message.content
+#     except Exception as e:
+#         # Import traceback here to avoid top-level import if not needed
+#         import traceback
+
+#         tb = traceback.format_exc()
+#         err_msg = f"invoke_llm error: {e}\nTraceback:\n{tb}"
+#         # Return the error message so callers can see what went wrong
+#         return err_msg
