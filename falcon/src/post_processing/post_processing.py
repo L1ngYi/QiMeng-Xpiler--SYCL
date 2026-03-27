@@ -321,7 +321,7 @@ def _promote_sycl_cached_matmul(code):
     return updated
 
 
-def _run_sycl_cache_process(code, space_maps):
+def _run_sycl_cache_process(code, space_maps,target_platform):
     if "local_accessor<" in code:
         return make_full_func(code, "sycl")
 
@@ -503,9 +503,6 @@ def generate_cache_write_prompt(buffer, space, code):
 
 
 def run_cache_process(code, space_maps, target):
-    if target == "sycl":
-        return _run_sycl_cache_process(code, space_maps)
-
     # Get the list of intrinsics from the code
     intrinsic_list = get_intrinsic_content(code)
     # Ensure the intrinsic lists and spaces have matching lengths
@@ -558,9 +555,6 @@ def get_operation_words(pragma_line):
 
 
 def run_tensorization(code, target):
-    if target == "sycl":
-        return _run_sycl_tensorization(code)
-
     op_list = get_operation_words(code)
     if target in ["cuda", "hip"]:
         if "matmul" not in op_list:

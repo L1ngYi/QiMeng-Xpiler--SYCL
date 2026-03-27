@@ -293,22 +293,11 @@ def ast_sycl_thread_binding(code):
 
 def ast_thread_binding(code, target="cuda"):
     # Simple validation: only accept these targets
-    allowed_targets = ["cuda", "hip","sycl"]
-    if not isinstance(target, str):
-        raise ValueError(
-            f"Unsupported target '{target}'. Supported targets: {allowed_targets}"
-        )
-    
+    allowed_targets = ["cuda", "hip"]
     if target not in allowed_targets:
         raise ValueError(
             f"Unsupported target '{target}'. Supported targets: {allowed_targets}"
         )
-    
-    if target == "sycl":
-        # For SYCL, we will use the specialized AST-based transformation
-        return ast_sycl_thread_binding(code)
-    
-    
     # Analytical code
     ast = parse_code_ast(code)
 

@@ -33,7 +33,6 @@ def generate_prior_from_src(code, src_target, dst_target):
         logit_prior[7] = 0.4
 
     if dst_target == "sycl" and "parallel_for" not in code and "q.submit" not in code:
-        # Boost sycl_bind (index 11) when SYCL patterns are not yet present
         logit_prior[7] = 0.4
 
     return logit_prior

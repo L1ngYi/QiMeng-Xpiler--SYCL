@@ -8,7 +8,7 @@ from falcon.smt.loop_transformation.loop_contraction import (
 )
 from falcon.smt.loop_transformation.loop_fusion import ast_loop_fusion
 from falcon.smt.loop_transformation.loop_recovery import ast_loop_recovery
-
+from falcon.smt.loop_transformation.loop_recovery import ast_sycl_loop_recovery
 
 
 from falcon.smt.loop_transformation.loop_reorder import ast_loop_reorder
@@ -18,6 +18,7 @@ from falcon.smt.stmt_split import ast_stmt_split
 from falcon.smt.tensorization.detensorization import ast_detensorization
 from falcon.smt.tensorization.tensorization import ast_tensorization
 from falcon.smt.thread_binding import ast_thread_binding
+from falcon.smt.thread_binding import ast_sycl_thread_binding
 
 # 导入基于 LLM（大模型）的转换实现，作为优先方案
 from falcon.src.loop_transformation.loop_transformation import (
@@ -31,13 +32,16 @@ from falcon.src.loop_transformation.loop_transformation import (
 from falcon.src.post_processing.post_processing import (
     replace_operation_with_intrinsic,
     run_cache_process,
+    _run_sycl_cache_process,
     run_code_decoration,
     run_double_buffer,
     run_tensorization,
     run_thread_binding,
+    _run_sycl_tensorization,
 )
 from falcon.src.pre_processing.preprocessing import (
     run_detensorization,
+    _run_sycl_tensorization,
     run_loop_recovery,
 )
 from falcon.unit_test import unit_test
@@ -50,18 +54,15 @@ def loop_recovery(file_name, code, source_platform, target_platform):
     策略：优先使用LLM进行语义理解和恢复，失败则使用AST规则。
     """
     try:
-        # 尝试使用 LLM 进行恢复 (基于文本/概率)
         final_code = run_loop_recovery(code, source_platform)
-        # 运行单元测试验证正确性
         if not unit_test(file_name, final_code)[0]:
             raise RuntimeError("loop recovery error (LLM check failed)")
-            
     except Exception as e:
         print(f"[Info] LLM failed ({e}), falling back to AST rule-based recovery...")
-        
-        # LLM 失败或校验不通过，回退到 AST 规则恢复 (基于编译器/规则)
-        final_code = ast_loop_recovery(code, source_platform)
-            
+        if target_platform == "sycl":
+            final_code = ast_sycl_loop_recovery(code, source_platform)
+        else:
+            final_code = ast_loop_recovery(code, source_platform)
     return final_code
 
 
@@ -160,23 +161,17 @@ def auto_bind(file_name, code, source_platform, target_platform):
     """
     if target_platform not in ["cuda", "hip", "sycl"]:
         return code
-    if target_platform == "sycl":
-        try:
-            final_code = run_thread_binding(code, target_platform)
-            if not unit_test(file_name, final_code)[0]:
-                raise RuntimeError("auto_bind sycl error")
-        except Exception:
-            #final_code = ast_sycl_thread_binding(code)
-            final_code = ast_thread_binding(code, target_platform)
-        return final_code
+    
     try:
         final_code = run_thread_binding(code, target_platform)
         if not unit_test(file_name, final_code)[0]:
             raise RuntimeError("auto_bind error")
     except Exception:
-        final_code = ast_thread_binding(code, target_platform)
+        if target_platform == "sycl":
+            final_code = ast_sycl_thread_binding(code)
+        else:
+            final_code = ast_thread_binding(code, target_platform)
     return final_code
-
 
 
 def auto_cache(file_name, code, source_platform, target_platform):
@@ -201,7 +196,10 @@ def auto_cache(file_name, code, source_platform, target_platform):
     if space_maps is None and target_platform != "sycl":
         return code
     try:
-        cache_code = run_cache_process(code, space_maps, target_platform)
+        if target_platform == "sycl":
+            cache_code = _run_sycl_cache_process(code, space_maps, target_platform)
+        else:
+            cache_code = run_cache_process(code, space_maps, target_platform)
         if not unit_test(file_name, cache_code)[0]:
             raise RuntimeError("auto_cache error")
     except Exception as e:
@@ -224,7 +222,10 @@ def auto_tensorization(file_name, code, source_platform, target_platform):
             raise
 
     try:
-        final_code = run_tensorization(code, target_platform)
+        if target_platform == "sycl":
+            final_code = _run_sycl_tensorization(code, target_platform)
+        else:
+            final_code = run_tensorization(code, target_platform)
         if not unit_test(file_name, final_code)[0]:
             raise RuntimeError("auto_tensorization error")
     except Exception as e:
