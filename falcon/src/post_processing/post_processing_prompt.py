@@ -101,7 +101,8 @@ The input code is SYCL kernel code that has already been annotated by the LLM wi
   `#pragma operation(matmul(input[...], output[...]))`.
 - Tensorize the marked matrix multiplication for SYCL by producing a fast tiled kernel.
 - Prefer code that uses `local_accessor`, `nd_range<2>`, `nd_item<2>`,
-  `[[sycl::reqd_sub_group_size(16)]]`, and `sycl::mad(...)` in the reduction.
+  a backend-compatible `[[sycl::reqd_sub_group_size(...)]]` when applicable,
+  and `sycl::mad(...)` in the reduction.
 
 ### Requirements:
 1. Preserve the original function signature, function name, arguments, and overall semantics.

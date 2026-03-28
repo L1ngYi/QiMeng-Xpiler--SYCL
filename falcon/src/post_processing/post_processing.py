@@ -1,5 +1,6 @@
 import json
 import logging
+import os
 import re
 
 from falcon.client import invoke_llm
@@ -36,6 +37,58 @@ def _extract_pragma_payloads(code, pragma_name):
 
 def _split_csv(text):
     return [item.strip() for item in text.split(",") if item.strip()]
+
+
+def _get_sycl_preferred_subgroup_size():
+    override_keys = (
+        "SYCL_SUB_GROUP_SIZE",
+        "SYCL_PREFERRED_SUB_GROUP_SIZE",
+        "FALCON_SYCL_SUB_GROUP_SIZE",
+    )
+    for key in override_keys:
+        raw_value = os.environ.get(key)
+        if not raw_value:
+            continue
+        normalized = raw_value.strip().lower()
+        if normalized in {"0", "false", "none", "off"}:
+            return None
+        try:
+            subgroup_size = int(normalized)
+        except ValueError:
+            continue
+        if subgroup_size > 0:
+            return subgroup_size
+
+    selector = " ".join(
+        filter(
+            None,
+            [
+                os.environ.get("ONEAPI_DEVICE_SELECTOR"),
+                os.environ.get("SYCL_DEVICE_FILTER"),
+            ],
+        )
+    ).lower()
+    if "cuda" in selector or "nvidia" in selector:
+        return 32
+    return 16
+
+
+def _get_sycl_subgroup_attr(use_fma=False):
+    if not use_fma:
+        return ""
+    subgroup_size = _get_sycl_preferred_subgroup_size()
+    if not subgroup_size:
+        return ""
+    return f" [[sycl::reqd_sub_group_size({subgroup_size})]]"
+
+
+def _normalize_sycl_subgroup_attr(code):
+    subgroup_size = _get_sycl_preferred_subgroup_size()
+    pattern = r"\s*\[\[\s*sycl::reqd_sub_group_size\(\s*\d+\s*\)\s*\]\]"
+    if subgroup_size is None:
+        return re.sub(pattern, "", code)
+    replacement = f" [[sycl::reqd_sub_group_size({subgroup_size})]]"
+    return re.sub(pattern, replacement, code)
 
 
 def _split_parameters(param_text):
@@ -273,7 +326,7 @@ def _detect_sycl_matmul_kernel(code):
 
 
 def _generate_sycl_tiled_matmul(info, use_fma=False):
-    subgroup_attr = " [[sycl::reqd_sub_group_size(16)]]" if use_fma else ""
+    subgroup_attr = _get_sycl_subgroup_attr(use_fma=use_fma)
     inner_update = (
         "          sum = sycl::mad(\n"
         "              static_cast<float>(A_tile[local_row][kk]),\n"
@@ -343,10 +396,11 @@ def _promote_sycl_cached_matmul(code):
         return code
 
     updated = code
-    if "[[sycl::reqd_sub_group_size(16)]]" not in updated:
+    subgroup_attr = _get_sycl_subgroup_attr(use_fma=True)
+    if subgroup_attr and "reqd_sub_group_size(" not in updated:
         updated = re.sub(
             r"(\[=\]\s*\(\s*nd_item<2>\s+\w+\s*\))\s*{",
-            r"\1 [[sycl::reqd_sub_group_size(16)]] {",
+            rf"\1{subgroup_attr} {{",
             updated,
             count=1,
         )
@@ -361,7 +415,7 @@ def _promote_sycl_cached_matmul(code):
         ),
         updated,
     )
-    return updated
+    return _normalize_sycl_subgroup_attr(updated)
 
 
 def _is_sycl_tensorized(code):
@@ -369,39 +423,47 @@ def _is_sycl_tensorized(code):
         "[[sycl::reqd_sub_group_size(" in code
         or "joint_matrix" in code
         or "sub_group" in code
+        or "local_accessor<" in code
     )
 
 
 def _run_sycl_cache_process(code, space_maps, target_platform):
     if "local_accessor<" in code:
-        return make_full_func(code, "sycl")
+        return make_full_func(_normalize_sycl_subgroup_attr(code), "sycl")
 
     matmul_pragmas = _get_sycl_matmul_pragmas(code)
     if not matmul_pragmas:
-        return make_full_func(code, "sycl")
+        return make_full_func(_normalize_sycl_subgroup_attr(code), "sycl")
 
     info = _detect_sycl_matmul_kernel(code)
     if info is not None:
-        return make_full_func(_generate_sycl_tiled_matmul(info), "sycl")
+        return make_full_func(
+            _normalize_sycl_subgroup_attr(_generate_sycl_tiled_matmul(info)),
+            "sycl",
+        )
 
     cache_prompt = _generate_sycl_cache_prompt(code, matmul_pragmas)
     content = invoke_llm(cache_prompt)
     cached_code = extract_code(content)
+    if cached_code:
+        cached_code = _normalize_sycl_subgroup_attr(cached_code)
     if cached_code and "local_accessor" in cached_code:
         return make_full_func(cached_code, "sycl")
 
-    return make_full_func(code, "sycl")
+    return make_full_func(_normalize_sycl_subgroup_attr(code), "sycl")
 
 
 def _run_sycl_tensorization(code, target_platform="sycl"):
     if _is_sycl_tensorized(code):
-        return make_full_func(code, "sycl")
+        return make_full_func(_normalize_sycl_subgroup_attr(code), "sycl")
 
     matmul_pragmas = _get_sycl_matmul_pragmas(code)
     if matmul_pragmas:
         tensor_prompt = _generate_sycl_tensorization_prompt(code, matmul_pragmas)
         content = invoke_llm(tensor_prompt)
         tensorized_code = extract_code(content)
+        if tensorized_code:
+            tensorized_code = _normalize_sycl_subgroup_attr(tensorized_code)
         if tensorized_code and _is_sycl_tensorized(tensorized_code):
             return make_full_func(tensorized_code, "sycl")
 
@@ -413,7 +475,12 @@ def _run_sycl_tensorization(code, target_platform="sycl"):
     if info is None:
         return make_full_func(code, "sycl")
 
-    return make_full_func(_generate_sycl_tiled_matmul(info, use_fma=True), "sycl")
+    return make_full_func(
+        _normalize_sycl_subgroup_attr(
+            _generate_sycl_tiled_matmul(info, use_fma=True)
+        ),
+        "sycl",
+    )
 
 def run_thread_binding(code, target):
     PROMPT = """
