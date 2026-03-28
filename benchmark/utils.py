@@ -1,5 +1,11 @@
+import ctypes
+import os
+import shlex
+import shutil
 import subprocess
+from functools import lru_cache
 
+import numpy as np
 import torch
 import torch.nn.functional as F
 
@@ -174,24 +180,32 @@ def run_cuda_compilation(so_name, file_name):
 
 def run_sycl_compilation(so_name, file_name):
     """
-    使用 icpx (Intel LLVM) 或 dpcpp 编译 SYCL 代码为共享库。
+    使用用户配置的 DPCPP/Clang SYCL 编译器将 SYCL 代码编译为共享库。
     """
-    # 检查环境变量或默认使用 icpx
-    compiler = "icpx" 
-    
-    cmd = [
-        compiler,
-        "-fsycl",           # 启用 SYCL
-        "-fPIC",            # 生成位置无关代码 (用于 .so)
-        "-shared",          # 生成动态库
-        "-O3",              # 优化级别
-        file_name,
-        "-o",
-        so_name,
-    ]
-    
     try:
-        # icpx 有时会输出很多无关的 remark，可以加上 -Wno-xxx 屏蔽
+        env = configure_sycl_environment()
+        compiler_cmd = shlex.split(env.get("SYCL_COMPILER", ""))
+        if not compiler_cmd:
+            detected_compiler = shutil.which("icpx", path=env.get("PATH"))
+            if not detected_compiler:
+                detected_compiler = shutil.which("clang++", path=env.get("PATH"))
+            if not detected_compiler:
+                raise FileNotFoundError(
+                    "No SYCL compiler found. Set SYCL_COMPILER or load env_sycl.sh."
+                )
+            compiler_cmd = [detected_compiler]
+
+        extra_flags = shlex.split(env.get("SYCL_EXTRA_FLAGS", ""))
+        cmd = compiler_cmd + [
+            "-fsycl",
+            "-fPIC",
+            "-shared",
+            "-O3",
+            "-std=c++17",
+        ]
+        cmd.extend(extra_flags)
+        cmd.extend([file_name, "-o", so_name])
+
         output = subprocess.run(
             cmd,
             stdout=subprocess.PIPE,
@@ -199,13 +213,16 @@ def run_sycl_compilation(so_name, file_name):
             encoding="utf-8",
             check=True,
             text=True,
-            timeout=30, # 编译时间给稍微长一点
+            timeout=120,
+            env=env,
         )
         return True, output
     except subprocess.CalledProcessError as e:
         return False, e.output
     except subprocess.TimeoutExpired:
         return False, "Compilation timed out"
+    except Exception as e:
+        return False, str(e)
  
 
 def run_hip_compilation(so_name, file_name):
@@ -231,10 +248,134 @@ def run_hip_compilation(so_name, file_name):
     except subprocess.CalledProcessError as e:
         return False, e.output
 
-   
+ 
+def _resolve_sycl_env_script():
+    explicit_script = os.environ.get("SYCL_ENV_SCRIPT")
+    if explicit_script:
+        script_path = os.path.abspath(os.path.expanduser(explicit_script))
+        if not os.path.isfile(script_path):
+            raise FileNotFoundError(
+                f"SYCL environment script not found: {script_path}"
+            )
+        return script_path
+
+    repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+    candidate_paths = [
+        os.path.join(os.getcwd(), "env_sycl.sh"),
+        os.path.join(repo_root, "env_sycl.sh"),
+        os.path.expanduser("~/env_sycl.sh"),
+    ]
+
+    for candidate in candidate_paths:
+        script_path = os.path.abspath(os.path.expanduser(candidate))
+        if os.path.isfile(script_path):
+            return script_path
+    return None
+
+
+@lru_cache(maxsize=None)
+def _load_sycl_env_from_script(script_path):
+    command = f"source {shlex.quote(script_path)} >/dev/null 2>&1 && env -0"
+    result = subprocess.run(
+        ["bash", "-lc", command],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        check=True,
+    )
+
+    loaded_env = {}
+    for item in result.stdout.decode("utf-8", errors="ignore").split("\0"):
+        if "=" not in item:
+            continue
+        key, value = item.split("=", 1)
+        loaded_env[key] = value
+    return loaded_env
+
+
+def get_sycl_environment():
+    env = os.environ.copy()
+    script_path = _resolve_sycl_env_script()
+    if script_path:
+        env.update(_load_sycl_env_from_script(script_path))
+
+    device_selector = os.environ.get("SYCL_DEVICE_SELECTOR")
+    if device_selector:
+        env["ONEAPI_DEVICE_SELECTOR"] = device_selector
+    return env
+
+
+def configure_sycl_environment():
+    env = get_sycl_environment()
+    os.environ.update(env)
+    return env
+
+
+@lru_cache(maxsize=1)
+def preload_sycl_runtime():
+    env = configure_sycl_environment()
+    rtld_flag = getattr(os, "RTLD_GLOBAL", getattr(ctypes, "RTLD_GLOBAL", 0))
+    library_dirs = env.get("LD_LIBRARY_PATH", "").split(os.pathsep)
+    library_names = ("libsycl.so", "libsycl.so.8", "libsycl-preview.so")
+
+    for directory in library_dirs:
+        if not directory:
+            continue
+        for library_name in library_names:
+            library_path = os.path.join(directory, library_name)
+            if not os.path.isfile(library_path):
+                continue
+            ctypes.CDLL(library_path, mode=rtld_flag)
+            return library_path
+    return None
+
+
+def normalize_sycl_dtype(dtype):
+    normalized = dtype.replace("sycl::", "")
+    normalized = normalized.replace("const", "")
+    normalized = " ".join(normalized.split())
+    return normalized.strip()
+
+
+def get_sycl_numpy_dtype(dtype):
+    normalized = normalize_sycl_dtype(dtype)
+    mapping = {
+        "half": np.float16,
+        "float": np.float32,
+        "double": np.float64,
+        "int8_t": np.int8,
+        "uint8_t": np.uint8,
+        "int": np.int32,
+        "int32_t": np.int32,
+        "size_t": np.int64,
+    }
+    if normalized not in mapping:
+        raise NotImplementedError(f"Unsupported SYCL dtype: {dtype}")
+    return mapping[normalized]
+
+
+def get_sycl_ctype(dtype):
+    normalized = normalize_sycl_dtype(dtype)
+    mapping = {
+        "half": ctypes.c_uint16,
+        "float": ctypes.c_float,
+        "double": ctypes.c_double,
+        "int8_t": ctypes.c_int8,
+        "uint8_t": ctypes.c_uint8,
+        "int": ctypes.c_int,
+        "int32_t": ctypes.c_int32,
+        "size_t": ctypes.c_size_t,
+    }
+    if normalized not in mapping:
+        raise NotImplementedError(f"Unsupported SYCL dtype: {dtype}")
+    return mapping[normalized]
+
 
 def run_test(file_name, test_file):
     try:
+        env = None
+        test_dir_parts = os.path.normpath(test_file).split(os.sep)
+        if "sycl_test" in test_dir_parts:
+            env = configure_sycl_environment()
         output = subprocess.run(
             ["python", test_file, "--file", file_name],
             stdout=subprocess.PIPE,
@@ -243,6 +384,7 @@ def run_test(file_name, test_file):
             check=True,
             text=True,
             timeout=400,
+            env=env,
         )
         return True, output
     except subprocess.TimeoutExpired:

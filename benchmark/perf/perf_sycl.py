@@ -1,107 +1,136 @@
 import argparse
 import ctypes
 import os
-import re
-import subprocess
 import tempfile
-import numpy as np
 from string import Template
 
-def _run_sycl_compilation(output_file, source_file):
-    """使用 icpx -fsycl 编译 SYCL 共享库 (.so)"""
-    try:
-        # 注意这里加了 -shared 和 -fPIC，为了让 Python 能作为动态库加载
-        result = subprocess.run(
-            [
-                "icpx",
-                "-fsycl",
-                "-O2",
-                "-std=c++17",
-                "-shared",
-                "-fPIC",
-                source_file,
-                "-o",
-                output_file,
-            ],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            encoding="utf-8",
-            timeout=120,
-        )
-        return result.returncode == 0, result.stdout
-    except Exception as e:
-        return False, str(e)
+import numpy as np
 
-# --- 核心修改：遵循 CUDA 的 timed_xxx 逻辑 ---
+from benchmark.template.sycl_host_template import (
+    get_sycl_function_metadata,
+    get_sycl_matmul_size_exprs,
+)
+from benchmark.utils import (
+    configure_sycl_environment,
+    get_sycl_ctype,
+    get_sycl_numpy_dtype,
+    preload_sycl_runtime,
+    run_sycl_compilation as run_compilation,
+)
+
 _SYCL_PERF_TEMPLATE = Template(
     """
 #include <sycl/sycl.hpp>
 #include <chrono>
+#include <iostream>
 
 using namespace sycl;
 using namespace std::chrono;
 
-// 原始 Kernel 代码
 ${kernel_code}
 
-// 导出 C 接口，返回 float 类型的时间 (ms)
-extern "C" float timed_${kernel_name}_kernel(float *A, float *B, float *result, int M, int K, int N) {
-    queue q;
-    // 这里的 M, K, N 必须参与计算，确保分配的大小正确
-    float *d_A = malloc_device<float>(M * K, q);
-    float *d_B = malloc_device<float>(K * N, q);
-    float *d_result = malloc_device<float>(M * N, q);
+extern "C" float timed_${kernel_name}_kernel(${extern_c_params}) {
+    try {
+        queue q;
+        ${alloc_code}
 
-    q.memcpy(d_A, A, M * K * sizeof(float));
-    q.memcpy(d_B, B, K * N * sizeof(float)).wait();
+        ${memcpy_htod_code}
+        q.wait();
 
-    // 1. 预热 (Warm-up)
-    for (int i = 0; i < 5; ++i) {
-        ${kernel_call};
+        for (int i = 0; i < 5; ++i) {
+            ${kernel_call};
+        }
+        q.wait();
+
+        auto t0 = high_resolution_clock::now();
+        for (int i = 0; i < 50; ++i) {
+            ${kernel_call};
+        }
+        q.wait();
+        auto t1 = high_resolution_clock::now();
+
+        float elapsed_ms = duration_cast<microseconds>(t1 - t0).count() / 1000.0f / 50.0f;
+
+        ${memcpy_dtoh_code}
+        q.wait();
+
+        ${free_code}
+
+        return elapsed_ms;
+    } catch (sycl::exception const &e) {
+        std::cerr << "[SYCL Perf Error] " << e.what() << std::endl;
+        return 1000000.0f;
     }
-    q.wait();
-
-    // 2. 测速
-    auto t0 = high_resolution_clock::now();
-    for (int i = 0; i < 50; ++i) {
-        ${kernel_call};
-    }
-    q.wait();
-    auto t1 = high_resolution_clock::now();
-
-    float elapsed_ms = duration_cast<microseconds>(t1 - t0).count() / 1000.0f / 50.0f;
-
-    free(d_A, q);
-    free(d_B, q);
-    free(d_result, q);
-
-    return elapsed_ms; // 直接返回时间，不再 printf
 }
 """
 )
 
-def benchmark(file_name):
-    FAILURE = 1_000_000.0
-    
-    with open(file_name, "r", encoding="utf-8") as fh:
-        kernel_code = fh.read()
+_FAILURE = 1_000_000.0
 
-    # 解析文件名获取维度 [M, K, N]
-    base_name = os.path.basename(file_name)
-    name = base_name.split("_")[0] # "gemm"
-    shapes = base_name.split(".")[0].split("_")[1:]
-    M, K, N = [int(i) for i in shapes]
 
-    # 构造内核调用字符串：这里强制匹配 A, B, result, q
-    # 因为大模型生成的 gemm 签名固定是 (float *A, float *B, float *result, queue &q)
-    kernel_call = f"{name}(d_A, d_B, d_result, q)"
+def _build_perf_harness(kernel_code, metadata):
+    size_exprs = get_sycl_matmul_size_exprs(metadata)
+    pointer_params = metadata["pointer_params"]
+    scalar_params = metadata["scalar_params"]
 
-    # 填充模板
-    harness = _SYCL_PERF_TEMPLATE.substitute(
-        kernel_code=kernel_code,
-        kernel_name=name,
-        kernel_call=kernel_call
+    alloc_code = []
+    memcpy_htod = []
+    free_code = []
+    device_args = []
+
+    for index, param in enumerate(pointer_params):
+        name = param["name"]
+        storage_dtype = param["storage_dtype"]
+        alloc_code.append(f"{storage_dtype} *d_{name} = sycl::malloc_device<{storage_dtype}>({size_exprs[index]}, q);")
+        free_code.append(f"sycl::free(d_{name}, q);")
+        device_args.append(f"d_{name}")
+
+        if index < len(pointer_params) - 1:
+            memcpy_htod.append(
+                f"q.memcpy(d_{name}, {name}, {size_exprs[index]} * sizeof({storage_dtype}));"
+            )
+
+    result_param = pointer_params[-1]
+    memcpy_dtoh_code = (
+        f"q.memcpy({result_param['name']}, d_{result_param['name']}, "
+        f"{size_exprs[-1]} * sizeof({result_param['storage_dtype']}));"
     )
+
+    for param in scalar_params:
+        device_args.append(param["name"])
+    device_args.append("q")
+
+    return _SYCL_PERF_TEMPLATE.substitute(
+        kernel_code=kernel_code,
+        kernel_name=metadata["kernel_name"],
+        extern_c_params=", ".join(
+            [param["full"] for param in metadata["data_params"]]
+        ),
+        alloc_code="\n    ".join(alloc_code),
+        memcpy_htod_code="\n    ".join(memcpy_htod),
+        kernel_call=f"{metadata['kernel_name']}({', '.join(device_args)})",
+        memcpy_dtoh_code=memcpy_dtoh_code,
+        free_code="\n    ".join(free_code),
+    )
+
+
+def benchmark(file_name):
+    try:
+        configure_sycl_environment()
+        metadata = get_sycl_function_metadata(file_name)
+        with open(file_name, "r", encoding="utf-8") as fh:
+            kernel_code = fh.read()
+        harness = _build_perf_harness(kernel_code, metadata)
+    except Exception as e:
+        print(f"[Perf Error] Failed to prepare SYCL benchmark: {e}")
+        return _FAILURE
+
+    base_name = os.path.basename(file_name)
+    shapes = [int(token) for token in os.path.splitext(base_name)[0].split("_")[1:]]
+    if len(shapes) < 3:
+        print(f"[Perf Error] Invalid matmul shape encoded in file name: {base_name}")
+        return _FAILURE
+    m_dim, k_dim, n_dim = shapes[:3]
 
     with tempfile.TemporaryDirectory() as tmpdir:
         src_path = os.path.join(tmpdir, "perf_tmp.cpp")
@@ -110,41 +139,50 @@ def benchmark(file_name):
         with open(src_path, "w", encoding="utf-8") as f:
             f.write(harness)
 
-        success, output = _run_sycl_compilation(so_path, src_path)
+        success, output = run_compilation(so_path, src_path)
         if not success:
             print(f"[Perf Error] Compilation failed: {output}")
-            return FAILURE
+            return _FAILURE
 
         try:
-            # 加载动态库 (使用 RTLD_GLOBAL 避开 SYCL 锁问题)
-            lib = ctypes.CDLL(so_path, mode=ctypes.RTLD_GLOBAL)
-            func = getattr(lib, f"timed_{name}_kernel")
-            
-            # 设置 ctypes 参数类型
-            func.argtypes = [
-                ctypes.POINTER(ctypes.c_float),
-                ctypes.POINTER(ctypes.c_float),
-                ctypes.POINTER(ctypes.c_float),
-                ctypes.c_int, ctypes.c_int, ctypes.c_int
+            preload_sycl_runtime()
+            rtld_flag = getattr(os, "RTLD_GLOBAL", getattr(ctypes, "RTLD_GLOBAL", 0))
+            lib = ctypes.CDLL(so_path, mode=rtld_flag)
+            func = getattr(lib, f"timed_{metadata['kernel_name']}_kernel")
+
+            pointer_ctypes = [
+                ctypes.POINTER(get_sycl_ctype(param["dtype"]))
+                for param in metadata["pointer_params"]
             ]
-            func.restype = ctypes.c_float # 必须声明返回 float
+            scalar_ctypes = [
+                get_sycl_ctype(param["dtype"])
+                for param in metadata["scalar_params"]
+            ]
+            func.argtypes = pointer_ctypes + scalar_ctypes
+            func.restype = ctypes.c_float
 
-            # 准备随机测试数据
-            A_np = np.random.randn(M, K).astype(np.float32)
-            B_np = np.random.randn(K, N).astype(np.float32)
-            C_np = np.zeros((M, N), dtype=np.float32)
+            pointer_params = metadata["pointer_params"]
+            arrays = [
+                np.random.randn(m_dim, k_dim).astype(
+                    get_sycl_numpy_dtype(pointer_params[0]["dtype"])
+                ),
+                np.random.randn(k_dim, n_dim).astype(
+                    get_sycl_numpy_dtype(pointer_params[1]["dtype"])
+                ),
+                np.zeros((m_dim, n_dim), dtype=get_sycl_numpy_dtype(pointer_params[2]["dtype"])),
+            ]
 
-            # 调用并获取时间
+            scalar_values = [m_dim, k_dim, n_dim][: len(metadata["scalar_params"])]
             elapsed_time = func(
-                A_np.ctypes.data_as(ctypes.POINTER(ctypes.c_float)),
-                B_np.ctypes.data_as(ctypes.POINTER(ctypes.c_float)),
-                C_np.ctypes.data_as(ctypes.POINTER(ctypes.c_float)),
-                M, K, N
+                arrays[0].ctypes.data_as(pointer_ctypes[0]),
+                arrays[1].ctypes.data_as(pointer_ctypes[1]),
+                arrays[2].ctypes.data_as(pointer_ctypes[2]),
+                *scalar_values,
             )
             return float(elapsed_time)
         except Exception as e:
             print(f"[Perf Error] Runtime error: {e}")
-            return FAILURE
+            return _FAILURE
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
