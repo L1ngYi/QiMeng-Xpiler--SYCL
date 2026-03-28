@@ -81,11 +81,11 @@ def get_invalid_actions(code, source_platform, target_platform):
                 invalid_mask[9] = 0  # auto_tensorization
             else:
                 invalid_mask[7] = 0  # auto_bind 自动绑定
-                invalid_mask[1] = 0  # stmt_split 语句分解
-                invalid_mask[3] = 0  # loop_fusion 循环融合
-                invalid_mask[4] = 0  # loop_reorder 循环重排
-                invalid_mask[5] = 0  # loop_split 循环分割
-                invalid_mask[6] = 0  # loop_contraction 循环收缩
+                # invalid_mask[1] = 0  # stmt_split 语句分解
+                # invalid_mask[3] = 0  # loop_fusion 循环融合
+                # invalid_mask[4] = 0  # loop_reorder 循环重排
+                # invalid_mask[5] = 0  # loop_split 循环分割
+                # invalid_mask[6] = 0  # loop_contraction 循环收缩
                 
         return invalid_mask
 

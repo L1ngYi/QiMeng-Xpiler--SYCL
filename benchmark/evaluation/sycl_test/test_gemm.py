@@ -8,6 +8,7 @@ import numpy as np
 from benchmark.template.sycl_host_template import (
     create_sycl_func,
     get_sycl_function_metadata,
+    get_sycl_shape_from_file_name,
 )
 from benchmark.utils import (
     configure_sycl_environment,
@@ -25,19 +26,17 @@ if __name__ == "__main__":
     configure_sycl_environment()
     metadata = get_sycl_function_metadata(args.file)
 
-    base_name = os.path.basename(args.file)
-    shape = [
-        int(token)
-        for token in os.path.splitext(base_name)[0].split("_")[1:]
-    ]
-    if len(shape) < 3:
-        raise ValueError(f"Invalid GEMM shape encoded in file name: {base_name}")
+    shape = get_sycl_shape_from_file_name(args.file)
     print(f"Testing Shapes: {shape[:3]}", flush=True)
 
     pointer_params = metadata["pointer_params"]
     scalar_params = metadata["scalar_params"]
-    if len(pointer_params) != 3 or len(scalar_params) < 3:
-        raise ValueError("SYCL GEMM test expects 3 pointer params and 3 scalar dims.")
+    if len(pointer_params) != 3:
+        raise ValueError("SYCL GEMM test expects exactly 3 pointer params.")
+    if scalar_params and len(scalar_params) != 3:
+        raise ValueError(
+            "SYCL GEMM test only supports either 0 scalar dims or exactly 3."
+        )
 
     m_dim, k_dim, n_dim = shape[:3]
     A_data = np.ones(
@@ -56,7 +55,7 @@ if __name__ == "__main__":
 
     unique_id = uuid.uuid4().hex[:8]
     so_name = args.file.replace(".cpp", f"_{unique_id}.so")
-    wrapper_file = create_sycl_func(args.file, op_type="matmul")
+    wrapper_file = create_sycl_func(args.file, op_type="matmul", shape=shape)
 
     try:
         success, output = run_compilation(so_name, wrapper_file)

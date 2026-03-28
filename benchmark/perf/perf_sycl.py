@@ -9,6 +9,8 @@ import numpy as np
 from benchmark.template.sycl_host_template import (
     get_sycl_function_metadata,
     get_sycl_matmul_size_exprs,
+    get_sycl_invocation_args,
+    get_sycl_shape_from_file_name,
 )
 from benchmark.utils import (
     configure_sycl_environment,
@@ -67,23 +69,21 @@ extern "C" float timed_${kernel_name}_kernel(${extern_c_params}) {
 
 _FAILURE = 1_000_000.0
 
-
-def _build_perf_harness(kernel_code, metadata):
-    size_exprs = get_sycl_matmul_size_exprs(metadata)
+def _build_perf_harness(kernel_code, metadata, shape):
+    size_exprs = get_sycl_matmul_size_exprs(metadata, shape=shape)
     pointer_params = metadata["pointer_params"]
-    scalar_params = metadata["scalar_params"]
 
     alloc_code = []
     memcpy_htod = []
     free_code = []
-    device_args = []
+    pointer_name_map = {}
 
     for index, param in enumerate(pointer_params):
         name = param["name"]
         storage_dtype = param["storage_dtype"]
         alloc_code.append(f"{storage_dtype} *d_{name} = sycl::malloc_device<{storage_dtype}>({size_exprs[index]}, q);")
         free_code.append(f"sycl::free(d_{name}, q);")
-        device_args.append(f"d_{name}")
+        pointer_name_map[name] = f"d_{name}"
 
         if index < len(pointer_params) - 1:
             memcpy_htod.append(
@@ -96,10 +96,6 @@ def _build_perf_harness(kernel_code, metadata):
         f"{size_exprs[-1]} * sizeof({result_param['storage_dtype']}));"
     )
 
-    for param in scalar_params:
-        device_args.append(param["name"])
-    device_args.append("q")
-
     return _SYCL_PERF_TEMPLATE.substitute(
         kernel_code=kernel_code,
         kernel_name=metadata["kernel_name"],
@@ -108,7 +104,7 @@ def _build_perf_harness(kernel_code, metadata):
         ),
         alloc_code="\n    ".join(alloc_code),
         memcpy_htod_code="\n    ".join(memcpy_htod),
-        kernel_call=f"{metadata['kernel_name']}({', '.join(device_args)})",
+        kernel_call=f"{metadata['kernel_name']}({', '.join(get_sycl_invocation_args(metadata, pointer_name_map=pointer_name_map))})",
         memcpy_dtoh_code=memcpy_dtoh_code,
         free_code="\n    ".join(free_code),
     )
@@ -120,17 +116,17 @@ def benchmark(file_name):
         metadata = get_sycl_function_metadata(file_name)
         with open(file_name, "r", encoding="utf-8") as fh:
             kernel_code = fh.read()
-        harness = _build_perf_harness(kernel_code, metadata)
     except Exception as e:
         print(f"[Perf Error] Failed to prepare SYCL benchmark: {e}")
         return _FAILURE
 
-    base_name = os.path.basename(file_name)
-    shapes = [int(token) for token in os.path.splitext(base_name)[0].split("_")[1:]]
-    if len(shapes) < 3:
-        print(f"[Perf Error] Invalid matmul shape encoded in file name: {base_name}")
+    try:
+        shape = get_sycl_shape_from_file_name(file_name)
+        harness = _build_perf_harness(kernel_code, metadata, shape)
+    except Exception as e:
+        print(f"[Perf Error] Failed to prepare SYCL benchmark: {e}")
         return _FAILURE
-    m_dim, k_dim, n_dim = shapes[:3]
+    m_dim, k_dim, n_dim = shape[:3]
 
     with tempfile.TemporaryDirectory() as tmpdir:
         src_path = os.path.join(tmpdir, "perf_tmp.cpp")

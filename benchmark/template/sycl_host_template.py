@@ -58,21 +58,63 @@ def get_sycl_function_metadata(file_name):
     return metadata
 
 
-def get_sycl_matmul_size_exprs(metadata):
+def get_sycl_shape_from_file_name(file_name):
+    base_name = file_name.rsplit("/", 1)[-1]
+    name_without_ext = base_name.rsplit(".", 1)[0]
+    shape_tokens = name_without_ext.split("_")[1:]
+    if len(shape_tokens) < 3:
+        raise ValueError(
+            f"Invalid matmul shape encoded in file name: {base_name}"
+        )
+    return [int(token) for token in shape_tokens[:3]]
+
+
+def get_sycl_matmul_size_exprs(metadata, shape=None):
     pointer_params = metadata["pointer_params"]
     scalar_params = metadata["scalar_params"]
-    if len(pointer_params) != 3 or len(scalar_params) < 3:
+    if len(pointer_params) != 3:
         raise NotImplementedError(
-            "SYCL matmul wrappers expect 3 pointer params and at least 3 scalar dims."
+            "SYCL matmul wrappers expect exactly 3 pointer params."
         )
 
-    m_name = scalar_params[0]["name"]
-    k_name = scalar_params[1]["name"]
-    n_name = scalar_params[2]["name"]
-    return [f"{m_name} * {k_name}", f"{k_name} * {n_name}", f"{m_name} * {n_name}"]
+    if len(scalar_params) == 3:
+        m_name = scalar_params[0]["name"]
+        k_name = scalar_params[1]["name"]
+        n_name = scalar_params[2]["name"]
+        return [
+            f"{m_name} * {k_name}",
+            f"{k_name} * {n_name}",
+            f"{m_name} * {n_name}",
+        ]
+
+    if scalar_params:
+        raise NotImplementedError(
+            "SYCL matmul wrappers support either 0 scalar dims or exactly 3."
+        )
+
+    if shape is None:
+        raise NotImplementedError(
+            "SYCL matmul wrappers need either 3 scalar dims or a shape fallback."
+        )
+
+    m_dim, k_dim, n_dim = shape[:3]
+    return [str(m_dim * k_dim), str(k_dim * n_dim), str(m_dim * n_dim)]
 
 
-def create_sycl_func(file_name, op_type="ewise"):
+def get_sycl_invocation_args(metadata, pointer_name_map=None, queue_name="q"):
+    pointer_name_map = pointer_name_map or {}
+    call_args = []
+    for param in metadata["raw_params"]:
+        if "queue" in param["dtype"]:
+            call_args.append(queue_name)
+        elif param["is_pointer"]:
+            call_args.append(pointer_name_map.get(param["name"], param["name"]))
+        else:
+            call_args.append(param["name"])
+    return call_args
+
+
+def create_sycl_func(file_name, op_type="ewise", shape=None):
     """
     读取 SYCL 源代码，生成包含 Host 端调用的完整 C++ 文件。
     """
@@ -81,28 +123,16 @@ def create_sycl_func(file_name, op_type="ewise"):
     kernel_name = metadata["kernel_name"]
     data_params = metadata["data_params"]
     pointer_params = metadata["pointer_params"]
-    scalar_params = metadata["scalar_params"]
 
     # 3. 生成内存管理代码
     device_memory_alloc = [] 
     memcpy_htod = []        
-    device_vars = []        # 调用 kernel 时传入的参数列表
-    
-    # 构造 kernel 调用时的参数列表
-    # 指针参数变成 name_sycl，标量参数保持原名
-    for p in data_params:
-        if p["is_pointer"]:
-            var_name = p["name"]
-            device_vars.append(f"{var_name}_sycl")
-        else:
-            device_vars.append(p["name"])
-    
-    # 既然你的 kernel 定义里有 queue &q，我们调用时必须把它加进去
-    device_vars.append("q")
 
     # 根据 op_type 生成 Size 逻辑 (复用你 CUDA 模板的逻辑)
     if op_type == "matmul":
-        size_exprs = get_sycl_matmul_size_exprs(metadata)
+        if shape is None:
+            shape = get_sycl_shape_from_file_name(file_name)
+        size_exprs = get_sycl_matmul_size_exprs(metadata, shape=shape)
         
         # 分配内存 & Host->Device 拷贝
         for i, item in enumerate(pointer_params):
@@ -136,6 +166,9 @@ def create_sycl_func(file_name, op_type="ewise"):
     # 4. 构造模板
     # 生成 extern "C" 的参数列表：原始指针参数 + 原始标量参数（去掉 queue）
     extern_c_params = ", ".join([param["full"] for param in data_params])
+    pointer_name_map = {
+        param["name"]: f"{param['name']}_sycl" for param in pointer_params
+    }
 
     host_func_template = Template(
 """
@@ -185,7 +218,9 @@ extern "C" void ${kernel_name}_kernel(${extern_c_params}) {
         extern_c_params=extern_c_params,
         alloc_code="\n        ".join(device_memory_alloc),
         memcpy_htod_code="\n        ".join(memcpy_htod),
-        called_args=", ".join(device_vars),
+        called_args=", ".join(
+            get_sycl_invocation_args(metadata, pointer_name_map=pointer_name_map)
+        ),
         memcpy_dtoh_code=memcpy_dtoh,
         free_code="\n        ".join([f"sycl::free({p['name']}_sycl, q);" for p in pointer_params])
     )
