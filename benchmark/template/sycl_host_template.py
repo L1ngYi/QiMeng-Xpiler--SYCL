@@ -114,6 +114,39 @@ def get_sycl_invocation_args(metadata, pointer_name_map=None, queue_name="q"):
     return call_args
 
 
+def add_explicit_sycl_kernel_names(code, base_name):
+    """Give unnamed SYCL kernels stable explicit names for runtime lookup."""
+    counter = 0
+
+    def _replace_parallel_for(match):
+        nonlocal counter
+        replacement = (
+            f"parallel_for<class __{base_name}_sycl_kernel_{counter}>("
+        )
+        counter += 1
+        return replacement
+
+    def _replace_single_task(match):
+        nonlocal counter
+        replacement = (
+            f"single_task<class __{base_name}_sycl_kernel_{counter}>("
+        )
+        counter += 1
+        return replacement
+
+    code = re.sub(
+        r"\bparallel_for\s*(?!<)\(",
+        _replace_parallel_for,
+        code,
+    )
+    code = re.sub(
+        r"\bsingle_task\s*(?!<)\(",
+        _replace_single_task,
+        code,
+    )
+    return code
+
+
 def create_sycl_func(file_name, op_type="ewise", shape=None):
     """
     读取 SYCL 源代码，生成包含 Host 端调用的完整 C++ 文件。
@@ -121,6 +154,9 @@ def create_sycl_func(file_name, op_type="ewise", shape=None):
     metadata = get_sycl_function_metadata(file_name)
     original_function = metadata["original_function"]
     kernel_name = metadata["kernel_name"]
+    rewritten_function = add_explicit_sycl_kernel_names(
+        original_function, kernel_name
+    )
     data_params = metadata["data_params"]
     pointer_params = metadata["pointer_params"]
 
@@ -213,7 +249,7 @@ extern "C" void ${kernel_name}_kernel(${extern_c_params}) {
     )
 
     new_code = host_func_template.substitute(
-        original_function=original_function,
+        original_function=rewritten_function,
         kernel_name=kernel_name,
         extern_c_params=extern_c_params,
         alloc_code="\n        ".join(device_memory_alloc),

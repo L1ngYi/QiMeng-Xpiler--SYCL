@@ -7,6 +7,7 @@ from string import Template
 import numpy as np
 
 from benchmark.template.sycl_host_template import (
+    add_explicit_sycl_kernel_names,
     get_sycl_function_metadata,
     get_sycl_matmul_size_exprs,
     get_sycl_invocation_args,
@@ -70,6 +71,9 @@ extern "C" float timed_${kernel_name}_kernel(${extern_c_params}) {
 _FAILURE = 1_000_000.0
 
 def _build_perf_harness(kernel_code, metadata, shape):
+    kernel_code = add_explicit_sycl_kernel_names(
+        kernel_code, f"{metadata['kernel_name']}_perf"
+    )
     size_exprs = get_sycl_matmul_size_exprs(metadata, shape=shape)
     pointer_params = metadata["pointer_params"]
 

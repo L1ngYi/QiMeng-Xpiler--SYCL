@@ -195,7 +195,7 @@ def run_sycl_compilation(so_name, file_name):
                 )
             compiler_cmd = [detected_compiler]
 
-        extra_flags = shlex.split(env.get("SYCL_EXTRA_FLAGS", ""))
+        extra_flags = _get_sycl_compile_flags(env)
         cmd = compiler_cmd + [
             "-fsycl",
             "-fPIC",
@@ -273,6 +273,39 @@ def _resolve_sycl_env_script():
     return None
 
 
+@lru_cache(maxsize=1)
+def _detect_cuda_arch_from_nvidia_smi():
+    nvidia_smi = shutil.which("nvidia-smi")
+    if not nvidia_smi:
+        return None
+
+    try:
+        result = subprocess.run(
+            [
+                nvidia_smi,
+                "--query-gpu=compute_cap",
+                "--format=csv,noheader",
+            ],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            encoding="utf-8",
+            check=True,
+            text=True,
+            timeout=5,
+        )
+    except Exception:
+        return None
+
+    first_line = result.stdout.strip().splitlines()[0].strip()
+    if not first_line:
+        return None
+
+    normalized = first_line.replace(".", "")
+    if not normalized.isdigit():
+        return None
+    return f"sm_{normalized}"
+
+
 @lru_cache(maxsize=None)
 def _load_sycl_env_from_script(script_path):
     command = f"source {shlex.quote(script_path)} >/dev/null 2>&1 && env -0"
@@ -302,6 +335,48 @@ def get_sycl_environment():
     if device_selector:
         env["ONEAPI_DEVICE_SELECTOR"] = device_selector
     return env
+
+
+def _get_sycl_compile_flags(env):
+    user_flags = shlex.split(env.get("SYCL_EXTRA_FLAGS", ""))
+    normalized_flags = list(user_flags)
+
+    if "-fsycl-unnamed-lambda" not in normalized_flags:
+        normalized_flags.append("-fsycl-unnamed-lambda")
+
+    selector = env.get("ONEAPI_DEVICE_SELECTOR", "")
+    requested_targets = env.get("SYCL_TARGETS", "").strip()
+    has_explicit_targets = any(
+        flag.startswith("-fsycl-targets=") for flag in normalized_flags
+    )
+
+    if requested_targets and not has_explicit_targets:
+        normalized_flags.append(f"-fsycl-targets={requested_targets}")
+        has_explicit_targets = True
+
+    using_cuda_backend = "cuda" in selector or requested_targets == "nvptx64-nvidia-cuda"
+    if using_cuda_backend and not has_explicit_targets:
+        normalized_flags.append("-fsycl-targets=nvptx64-nvidia-cuda")
+
+    has_cuda_arch_flag = any(
+        "cuda-gpu-arch" in flag or "offload-arch" in flag
+        for flag in normalized_flags
+    )
+    if using_cuda_backend and not has_cuda_arch_flag:
+        cuda_arch = (
+            env.get("SYCL_CUDA_ARCH")
+            or env.get("CUDAARCHS")
+            or _detect_cuda_arch_from_nvidia_smi()
+            or "sm_80"
+        )
+        normalized_flags.extend(
+            [
+                "-Xsycl-target-backend=nvptx64-nvidia-cuda",
+                f"--cuda-gpu-arch={cuda_arch}",
+            ]
+        )
+
+    return normalized_flags
 
 
 def configure_sycl_environment():
