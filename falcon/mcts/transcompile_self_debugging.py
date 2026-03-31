@@ -230,11 +230,15 @@ class FalconGo:
         return self.action_len
 
 
-def build_env(file_name, source_platform="cuda", target_platform="cpu"):
+def build_env(
+    file_name,
+    source_platform="cuda",
+    target_platform="cpu",
+    optimizer_len=14,
+):
     action_len = len(ActionSpace)
     base_name = os.path.basename(file_name)
     op_name = base_name.split("_")[0]
-    optimizer_len = 14
     tvm_env = FalconGo(
         file_name,
         op_name,
@@ -333,7 +337,12 @@ def _run_demo(env, rng_key):
 
 def main(argv):
     rng_key = jax.random.PRNGKey(FLAGS.seed)
-    falcon_env = build_env(FLAGS.file_name, FLAGS.source, FLAGS.target)
+    falcon_env = build_env(
+        FLAGS.file_name,
+        FLAGS.source,
+        FLAGS.target,
+        optimizer_len=FLAGS.max_depth,
+    )
 
     start_time = time.time()
     policy_output = _run_demo(falcon_env, rng_key)

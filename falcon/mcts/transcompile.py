@@ -324,12 +324,16 @@ class FalconGo:
         return self.action_len
 
 
-def build_env(file_name, source_platform="cpu", target_platform="cuda"):
+def build_env(
+    file_name,
+    source_platform="cpu",
+    target_platform="cuda",
+    optimizer_len=14,
+):
     """构建 FalconGo 环境的工厂函数"""
     action_len = len(ActionSpace)
     base_name = os.path.basename(file_name)
     op_name = base_name.split("_")[0] #根据文件名提取操作名称，例如 gemm_32_32_128.cu -> gemm
-    optimizer_len = 14 # 硬编码的最大优化步数
     tvm_env = FalconGo(
         file_name,
         op_name,
@@ -449,7 +453,12 @@ def _run_demo(env, rng_key):
 def main(argv):
     rng_key = jax.random.PRNGKey(FLAGS.seed)
     # 构建环境
-    falcon_env = build_env(FLAGS.file_name, FLAGS.source, FLAGS.target)
+    falcon_env = build_env(
+        FLAGS.file_name,
+        FLAGS.source,
+        FLAGS.target,
+        optimizer_len=FLAGS.max_depth,
+    )
 
     start_time = time.time()
     # 执行搜索
