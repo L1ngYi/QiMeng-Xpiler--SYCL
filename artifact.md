@@ -144,6 +144,34 @@ Each will:
 
 All scripts print progress bars and summary statistics. Refer to each script’s header for platform-specific configuration flags if needed.
 
+## 6. SYCL Adaptation Paper Pipeline
+
+For the SYCL adaptation paper experiments in this repository, the recommended
+workflow is:
+
+1. Generate Falcon CPU -> SYCL candidates for the GEMM baseline suite:
+   ```bash
+   bash cpu_to_sycl_falcon.sh
+   ```
+2. Run direct CUDA -> DPC++ migration with per-case logs:
+   ```bash
+   bash cuda_to_dpcpp_batch.sh
+   ```
+3. Run the unified GEMM experiment suite for CUDA / Our-SYCL / DPC++:
+   ```bash
+   bash run_sycl_paper_gemm_suite.sh
+   ```
+
+The final step writes:
+
+- `benchmark/results/sycl_paper/gemm_detail.csv`
+- `benchmark/results/sycl_paper/translation_summary.csv`
+- `benchmark/results/sycl_paper/performance_summary.csv`
+- `benchmark/results/sycl_paper/experiment_tables.md`
+
+It also keeps per-case compile/runtime logs under
+`benchmark/results/sycl_paper/perf_logs/`.
+
 # Transcompiling
 Our transcompilation times range from 1.2 to 7.8 hours. To better showcase Falcon’s capabilities, we provide the following examples:
 

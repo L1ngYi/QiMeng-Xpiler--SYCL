@@ -1,5 +1,4 @@
 *.pyc
-benchmark/data
 3rdparty/
 tmp/
 tmps/
